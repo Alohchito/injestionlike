@@ -1,0 +1,327 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum BillingCurrency {
+  USD
+  EUR
+}
+
+enum SenderVerificationStatus {
+  PENDING
+  VERIFIED
+  REVOKED
+}
+
+enum SenderVerificationMethod {
+  EMAIL_LINK
+  DNS
+}
+
+enum RecipientConsentStatus {
+  PENDING
+  CONFIRMED
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINT
+  ADMINISTRATIVE
+}
+
+enum QuotaEntryStatus {
+  RESERVED
+  SENT
+  FAILED
+  CANCELED
+}
+
+enum InactivityActionType {
+  FLAGGED
+  PURGED
+}
+
+model User {
+  id                    String               @id @default(cuid())
+  email                 String               @unique
+  countryCode           String?              @db.VarChar(2)
+  // Store a keyed hash rather than a raw IP address to minimize retained personal data.
+  signupIpHash           String?              @db.VarChar(128)
+  status                AccountStatus        @default(PENDING)
+  registeredAt          DateTime             @default(now()) @db.Timestamptz(6)
+  activatedAt           DateTime?            @db.Timestamptz(6)
+  lastActiveAt          DateTime?            @db.Timestamptz(6)
+  termsAcceptedAt       DateTime?            @db.Timestamptz(6)
+  termsVersion          String?
+  noRefundPolicyAcceptedAt DateTime?          @db.Timestamptz(6)
+  createdAt             DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime             @updatedAt @db.Timestamptz(6)
+
+  subscriptions         Subscription[]
+  senders               VerifiedSender[]
+  campaigns             Campaign[]
+  recipientGroups       RecipientGroup[]
+  quotaEntries          QuotaLedger[]
+  inactivityActions    InactivityAction[]
+  complianceEvents      ComplianceEvent[]
+
+  @@index([status, lastActiveAt])
+}
+
+model Subscription {
+  id                    String             @id @default(cuid())
+  userId                String
+  status                SubscriptionStatus @default(PENDING)
+  paymentStatus         PaymentStatus      @default(PENDING)
+  currency              BillingCurrency
+  // Application validation must restrict this to 1,000..10,000 in 1,000-email steps.
+  emailsPer24Hours      Int
+  // Total prepaid term in whole months; application validation must require at least 1.
+  durationMonths        Int
+  startsAt              DateTime?          @db.Timestamptz(6)
+  expiresAt             DateTime?          @db.Timestamptz(6)
+  stripeCustomerId      String?
+  stripeCheckoutSessionId String?           @unique
+  stripeSubscriptionId  String?            @unique
+  stripePaymentIntentId String?            @unique
+  receiptUrl            String?
+  paidAt                DateTime?          @db.Timestamptz(6)
+  createdAt             DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime           @updatedAt @db.Timestamptz(6)
+
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentEvents         PaymentEvent[]
+
+  @@index([userId, status, expiresAt])
+}
+
+model PaymentEvent {
+  id                    String       @id @default(cuid())
+  subscriptionId        String
+  stripeEventId         String       @unique
+  eventType             String
+  processedAt           DateTime     @default(now()) @db.Timestamptz(6)
+  payloadDigest         String?
+
+  subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, processedAt])
+}
+
+model VerifiedSender {
+  id                    String                   @id @default(cuid())
+  userId                String
+  email                 String
+  displayName           String
+  replyToEmail          String?
+  verificationStatus    SenderVerificationStatus @default(PENDING)
+  verificationMethod    SenderVerificationMethod?
+  // Persist only a hash of one-time verification tokens.
+  verificationTokenHash String?                  @unique
+  verifiedAt            DateTime?                @db.Timestamptz(6)
+  createdAt             DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime                 @updatedAt @db.Timestamptz(6)
+
+  user                  User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns             Campaign[]
+  dnsChecks             SenderDnsCheck[]
+
+  @@unique([userId, email])
+  @@unique([userId, id])
+  @@index([userId, verificationStatus])
+}
+
+model SenderDnsCheck {
+  id                    String         @id @default(cuid())
+  senderId              String
+  recordType            String         @db.VarChar(16)
+  hostname              String
+  expectedValueHash     String
+  observedValueHash     String?
+  matched               Boolean        @default(false)
+  checkedAt             DateTime       @default(now()) @db.Timestamptz(6)
+
+  sender                VerifiedSender @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, checkedAt])
+}
+
+model Campaign {
+  id                    String           @id @default(cuid())
+  userId                String
+  senderId              String
+  name                  String
+  // The local part is used to construct the platform's inbound routing address.
+  routingLocalPart      String           @unique
+  isEnabled             Boolean          @default(false)
+  createdAt             DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
+
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sender                VerifiedSender   @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  recipientGroups       CampaignGroup[]
+  quotaEntries          QuotaLedger[]
+  inboundMessages       InboundMessage[]
+
+  @@index([userId, isEnabled])
+}
+
+model RecipientGroup {
+  id                    String           @id @default(cuid())
+  userId                String
+  name                  String
+  createdAt             DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
+
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipients            Recipient[]
+  campaigns             CampaignGroup[]
+
+  @@unique([userId, name])
+}
+
+model CampaignGroup {
+  campaignId            String
+  recipientGroupId      String
+  createdAt             DateTime       @default(now()) @db.Timestamptz(6)
+
+  campaign              Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipientGroup        RecipientGroup @relation(fields: [recipientGroupId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, recipientGroupId])
+  @@index([recipientGroupId])
+}
+
+model Recipient {
+  id                    String                 @id @default(cuid())
+  recipientGroupId      String
+  email                 String
+  consentStatus         RecipientConsentStatus @default(PENDING)
+  consentedAt           DateTime?              @db.Timestamptz(6)
+  consentSource         String?
+  consentEvidence       String?
+  unsubscribedAt        DateTime?              @db.Timestamptz(6)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
+
+  recipientGroup        RecipientGroup         @relation(fields: [recipientGroupId], references: [id], onDelete: Cascade)
+  quotaEntries          QuotaLedger[]
+
+  @@unique([recipientGroupId, email])
+  @@index([recipientGroupId, consentStatus])
+  @@index([email])
+}
+
+model SuppressionEntry {
+  id                    String            @id @default(cuid())
+  email                 String            @unique
+  reason                SuppressionReason
+  source                String?
+  createdAt             DateTime          @default(now()) @db.Timestamptz(6)
+}
+
+model InboundMessage {
+  id                    String       @id @default(cuid())
+  campaignId            String
+  providerMessageId     String?      @unique
+  senderEmail           String
+  subject               String?
+  bodyText              String?      @db.Text
+  bodyHtml              String?      @db.Text
+  receivedAt            DateTime     @default(now()) @db.Timestamptz(6)
+  processingStatus      String       @default("RECEIVED")
+  // Store provider attachment references, not unbounded attachment contents, in this row.
+  attachmentReferences  Json?
+
+  campaign              Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, receivedAt])
+}
+
+model QuotaLedger {
+  id                    String           @id @default(cuid())
+  userId                String
+  campaignId            String
+  recipientId           String
+  inboundMessageId      String?
+  idempotencyKey        String           @unique
+  status                QuotaEntryStatus @default(RESERVED)
+  // Rolling 24-hour usage is counted from this reservation timestamp.
+  reservedAt            DateTime         @default(now()) @db.Timestamptz(6)
+  completedAt           DateTime?        @db.Timestamptz(6)
+
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign              Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient             Recipient        @relation(fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@index([userId, reservedAt, status])
+  @@index([campaignId, reservedAt])
+  @@index([recipientId, reservedAt])
+}
+
+model InactivityAction {
+  id                    String               @id @default(cuid())
+  userId                String
+  action                InactivityActionType
+  reason                String
+  // The three-month inactivity/renewal policy is evaluated by scheduled application logic.
+  evaluatedAt           DateTime             @default(now()) @db.Timestamptz(6)
+  noRefundPolicyApplied Boolean              @default(false)
+
+  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, evaluatedAt])
+}
+
+model ComplianceEvent {
+  id                    String   @id @default(cuid())
+  userId                String
+  eventType             String
+  details               Json?
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+
+  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
+}
+
+model SupportFaq {
+  id                    String   @id @default(cuid())
+  question              String
+  answer                String
+  isPublished           Boolean  @default(false)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([isPublished, updatedAt])
+}
