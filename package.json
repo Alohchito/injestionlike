@@ -2,23 +2,23 @@
   "name": "injestionlike",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Alohchito/injestionlike.git"
+    "url": "git+https://github.com"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module"
+  "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/Alohchito/injestionlike/issues"
+    "url": "https://github.com"
   },
-  "homepage": "https://github.com/Alohchito/injestionlike#readme",
+  "homepage": "https://github.com",
   "dependencies": {
     "@prisma/client": "^7.10.1",
     "dotenv": "^18.0.9",
@@ -26,6 +26,6 @@
     "stripe": "^23.1.0"
   },
   "devDependencies": {
-    "prisma": "^8.0.0-rc.30"
+    "prisma": "^5.10.2"
   }
 }
