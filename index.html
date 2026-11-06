@@ -179,7 +179,7 @@
             <form action="/api/create-checkout-session" method="POST">
                 <div class="form-group" style="text-align: left;">
                     <label for="volume_tier">Daily Email Sending Limit</label>
-                    <select id="volume_tier" name="volume_tier">
+                    <select id="volume_tier" name="volume_tier" required>
                         <option value="1000">1,000 Emails / day ($19 base rate)</option>
                         <option value="2000">2,000 Emails / day ($35/month)</option>
                         <option value="3000">3,000 Emails / day ($45/month)</option>
@@ -190,7 +190,7 @@
 
                 <div class="form-group" style="text-align: left; margin-bottom: 25px;">
                     <label for="months">Subscription Plan Duration</label>
-                    <select id="months" name="months">
+                    <select id="months" name="months" required>
                         <option value="1">1 Month (Flexible rate)</option>
                         <option value="3">3 Months (15% Upfront discount)</option>
                         <option value="6">6 Months (25% Upfront discount)</option>
