@@ -100,17 +100,45 @@
         <p>Create secure email forwards, verify your custom sender identity, and start broadcasting today.</p>
         
         <div class="card">
-            <h2>Premium Activation Pass</h2>
-            <div class="price">$19<span>/one-time</span></div>
+            <h2>Premium Email Plan</h2>
+            <div class="price">Choose a plan<span> prepaid upfront</span></div>
             <ul class="features">
                 <li>Instant Activation Key delivery</li>
                 <li>Verify unlimited sender emails</li>
                 <li>Secure bulk newsletter broadcasting</li>
-                <li>Lifetime platform dashboard access</li>
+                <li>Choose your daily volume and commitment</li>
             </ul>
             <!-- This form links directly to your backend checkout session route -->
             <form action="/api/create-checkout-session" method="POST">
-                <button type="submit" class="btn">Get Activation Code Now</button>
+                  <label for="volume_tier">Daily email volume</label>
+                  <select id="volume_tier" name="volume_tier" required>
+                      <option value="1000">1,000 emails/day — $19/month</option>
+                      <option value="2000">2,000 emails/day — $35/month</option>
+                      <option value="3000">3,000 emails/day — $45/month</option>
+                      <option value="4000">4,000 emails/day — $49/month</option>
+                      <option value="5000">5,000 emails/day — $65/month</option>
+                      <option value="6000">6,000 emails/day — $69/month</option>
+                      <option value="7000">7,000 emails/day — $73/month</option>
+                      <option value="8000">8,000 emails/day — $77/month</option>
+                      <option value="9000">9,000 emails/day — $81/month</option>
+                      <option value="10000">10,000 emails/day — $85/month</option>
+                  </select>
+                  <label for="months">Commitment</label>
+                  <select id="months" name="months" required>
+                      <option value="1">1 month</option>
+                      <option value="2">2 months</option>
+                      <option value="3">3 months (15% off)</option>
+                      <option value="4">4 months (15% off)</option>
+                      <option value="5">5 months (15% off)</option>
+                      <option value="6">6 months (25% off)</option>
+                      <option value="7">7 months (25% off)</option>
+                      <option value="8">8 months (25% off)</option>
+                      <option value="9">9 months (25% off)</option>
+                      <option value="10">10 months (25% off)</option>
+                      <option value="11">11 months (25% off)</option>
+                      <option value="12">12 months (35% off)</option>
+                  </select>
+                  <button type="submit" class="btn">Get Activation Code Now</button>
             </form>
         </div>
     </div>
