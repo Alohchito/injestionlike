@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Injestionlike | Premium Email Forwarding & Newsletters</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --background: #0f172a;
+            --surface: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--background);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            text-align: center;
+            max-width: 600px;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(to right, #ffffff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin-bottom: 40px;
+        }
+        .card {
+            background-color: var(--surface);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+        .price {
+            font-size: 3rem;
+            font-weight: bold;
+            margin: 15px 0;
+        }
+        .price span {
+            font-size: 1rem;
+            color: var(--text-muted);
+        }
+        .features {
+            list-style: none;
+            padding: 0;
+            margin: 25px 0;
+            text-align: left;
+            display: inline-block;
+        }
+        .features li {
+            margin: 12px 0;
+            color: #cbd5e1;
+        }
+        .features li::before {
+            content: "✓ ";
+            color: #10b981;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        .btn {
+            display: block;
+            background-color: var(--primary);
+            color: white;
+            text-decoration: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: background 0.2s;
+            border: none;
+            width: 100%;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background-color: var(--primary-dark);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Verify & Send Bulk Newsletters Instantly</h1>
+        <p>Create secure email forwards, verify your custom sender identity, and start broadcasting today.</p>
+        
+        <div class="card">
+            <h2>Premium Activation Pass</h2>
+            <div class="price">$19<span>/one-time</span></div>
+            <ul class="features">
+                <li>Instant Activation Key delivery</li>
+                <li>Verify unlimited sender emails</li>
+                <li>Secure bulk newsletter broadcasting</li>
+                <li>Lifetime platform dashboard access</li>
+            </ul>
+            <!-- This form links directly to your backend checkout session route -->
+            <form action="/api/create-checkout-session" method="POST">
+                <button type="submit" class="btn">Get Activation Code Now</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
