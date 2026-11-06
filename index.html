@@ -4,9 +4,236 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Injestionlike | Premium Email Forwarding</title>
-    <!-- Full HTML structure available in source code -->
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --background: #0f172a;
+            --surface: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--background);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(to right, #ffffff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin-bottom: 30px;
+        }
+        .auth-container {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            text-align: left;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--border);
+        }
+        .tab-btn {
+            flex: 1;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            font-weight: 600;
+            padding: 10px;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            color: var(--primary);
+            border-bottom: 2px solid var(--primary);
+            margin-bottom: -2px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+        input:focus, select:focus {
+            border-color: var(--primary);
+            outline: none;
+        }
+        .auth-form {
+            display: none;
+        }
+        .auth-form.active {
+            display: block;
+        }
+        .error-msg {
+            color: #ef4444;
+            font-size: 0.85rem;
+            margin-top: 5px;
+            display: none;
+        }
+        .card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+        .btn {
+            display: block;
+            background-color: var(--primary);
+            color: white;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-weight: 600;
+            border: none;
+            width: 100%;
+            box-sizing: border-box;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .btn:hover {
+            background-color: var(--primary-dark);
+        }
+    </style>
 </head>
 <body>
-    <!-- Complete layout including login, signup, subscription configurator, and JavaScript redirect handlers -->
+    <div class="container">
+        <h1>Verify & Send Bulk Newsletters Instantly</h1>
+        <p class="subtitle">Create secure email forwards and verify custom sender domains safely.</p>
+        
+        <div class="auth-container">
+            <div class="auth-tabs">
+                <button id="loginTabBtn" class="tab-btn active" onclick="switchTab('login')">Log In</button>
+                <button id="signupTabBtn" class="tab-btn" onclick="switchTab('signup')">Sign Up</button>
+            </div>
+
+            <form id="loginForm" class="auth-form active" action="/api/login" method="POST">
+                <div class="form-group">
+                    <label for="loginEmail">Email Address</label>
+                    <input type="email" id="loginEmail" name="email" placeholder="you@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" name="password" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn" style="margin-top: 10px;">Sign In to My Account</button>
+            </form>
+
+            <form id="signupForm" class="auth-form" action="/api/signup" method="POST" onsubmit="return validatePasswords()">
+                <div class="form-group">
+                    <label for="signupEmail">Email Address</label>
+                    <input type="email" id="signupEmail" name="email" placeholder="you@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="signupPassword">Create Password</label>
+                    <input type="password" id="signupPassword" name="password" placeholder="Minimum 8 characters" required>
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">Confirm Password</label>
+                    <input type="password" id="confirmPassword" placeholder="Type password a second time" required>
+                    <div id="passwordError" class="error-msg">Passwords do not match. Please re-type carefully.</div>
+                </div>
+                <button type="submit" class="btn" style="margin-top: 10px;">Create Account & Verify Email</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Select Your Subscription Plan</h2>
+            <form action="/api/create-checkout-session" method="POST">
+                <div class="form-group" style="text-align: left;">
+                    <label for="volume_tier">Daily Email Sending Limit</label>
+                    <select id="volume_tier" name="volume_tier">
+                        <option value="1000">1,000 Emails / day ($19 base rate)</option>
+                        <option value="2000">2,000 Emails / day ($35/month)</option>
+                        <option value="3000">3,000 Emails / day ($45/month)</option>
+                        <option value="5000">5,000 Emails / day ($65/month)</option>
+                        <option value="10000">10,000 Emails / day ($85/month)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="text-align: left; margin-bottom: 25px;">
+                    <label for="months">Subscription Plan Duration</label>
+                    <select id="months" name="months">
+                        <option value="1">1 Month (Flexible rate)</option>
+                        <option value="3">3 Months (15% Upfront discount)</option>
+                        <option value="6">6 Months (25% Upfront discount)</option>
+                        <option value="12">12 Months (35% Upfront discount)</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn">Get Activation Code Now</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function switchTab(type) {
+            const loginForm = document.getElementById('loginForm');
+            const signupForm = document.getElementById('signupForm');
+            const loginBtn = document.getElementById('loginTabBtn');
+            const signupBtn = document.getElementById('signupTabBtn');
+
+            if (type === 'login') {
+                loginForm.classList.add('active');
+                signupForm.classList.remove('active');
+                loginBtn.classList.add('active');
+                signupBtn.classList.remove('active');
+            } else {
+                signupForm.classList.add('active');
+                loginForm.classList.remove('active');
+                signupBtn.classList.add('active');
+                loginBtn.classList.remove('active');
+            }
+        }
+
+        function validatePasswords() {
+            const pass = document.getElementById('signupPassword').value;
+            const confirm = document.getElementById('confirmPassword').value;
+            const error = document.getElementById('passwordError');
+
+            if (pass !== confirm) {
+                error.style.display = 'block';
+                return false;
+            }
+            error.style.display = 'none';
+            return true;
+        }
+    </script>
 </body>
 </html>
