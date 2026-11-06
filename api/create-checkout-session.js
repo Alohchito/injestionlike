@@ -1,25 +1,27 @@
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
+import Stripe from 'stripe';
+
+// This directly accesses the real variable you already saved in your Vercel Dashboard
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed. Please use a POST request.' });
+    return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
-    let volume_tier = req.body.volume_tier;
-    let months = req.body.months;
+    const volume_tier = req.body.volume_tier || req.query.volume_tier;
+    const months = req.body.months || req.query.months;
 
     const volume = parseInt(volume_tier, 10);
     const durationMonths = parseInt(months, 10);
 
     if (!volume || volume < 1000 || volume > 10000) {
-      return res.status(400).json({ error: 'volume_tier must be an integer from 1000 to 10000.' });
+      return res.status(400).json({ error: 'Invalid volume selection.' });
     }
 
     let monthlyRate = 19; 
     if (volume === 2000) monthlyRate = 35;
     if (volume === 3000) monthlyRate = 45;
-    if (volume === 4000) monthlyRate = 49;
     if (volume === 5000) monthlyRate = 65;
     if (volume === 10000) monthlyRate = 85;
 
@@ -36,26 +38,28 @@ export default async function handler(req, res) {
         price_data: {
           currency: 'usd',
           product_data: {
-            name: `${volume.toLocaleString()} Emails/Day Plan`,
-            description: `${durationMonths}-Month Subscription`,
+            name: `${volume.toLocaleString()} Emails/Day Subscription Pass`,
+            description: `${durationMonths}-Month access tier plan pass`,
           },
           unit_amount: finalTotalCents,
         },
         quantity: 1,
       }],
       mode: 'payment',
-      success_url: `https://vercel.app`,
-      cancel_url: `https://vercel.app`,
+      success_url: `https://injestionlike.vercel.app/`,
+      cancel_url: `https://injestionlike.vercel.app/`,
       metadata: {
         volume_limit: volume.toString(),
         commitment_months: durationMonths.toString(),
       },
     });
 
-    return res.redirect(333, session.url);
+    // Instead of forcing a raw browser redirect that can show errors, 
+    // we send the URL back to our webpage to open it cleanly and safely
+    return res.status(200).json({ url: session.url });
 
   } catch (error) {
-    console.error('❌ Checkout error:', error.message);
-    return res.status(500).json({ error: 'Could not communicate with Stripe.' });
+    console.error('❌ Stripe Connection Error:', error.message);
+    return res.status(500).json({ error: 'Secure payment gateway busy. Please try again.' });
   }
 }
