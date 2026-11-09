@@ -1,55 +1,55 @@
-import { PrismaClient } from '@prisma/client';
+const { PrismaClient } = require('@prisma/client');
+const { hashPassword } = require('../utils/password');
 
 const prisma = new PrismaClient();
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default async function handler(req, res) {
-  // Only accept POST requests from our HTML form
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    res.setHeader('Allow', 'POST');
+    return res.status(405).send('Method Not Allowed');
+  }
+
+  const body = req.body;
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  const password = body && typeof body.password === 'string' ? body.password : '';
+
+  if (!email || !password) {
+    return res.status(400).send('Please enter both an email and password.');
+  }
+
+  if (email.length > 254 || !emailPattern.test(email)) {
+    return res.status(400).send('Please enter a valid email address.');
+  }
+
+  if (password.length < 8 || password.length > 128) {
+    return res.status(400).send('Password must be between 8 and 128 characters.');
   }
 
   try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).send('<h1>Error</h1><p>Please enter both an email and password.</p>');
-    }
-
-    // Check if the user account records already exist
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
+    const passwordHash = await hashPassword(password);
+    const user = await prisma.user.create({
+      data: { email, passwordHash },
+      select: { email: true },
     });
 
-    if (existingUser) {
-      return res.status(400).send('<h1>Account Exists</h1><p>This email is already registered. Please try logging in.</p>');
-    }
-
-    // Save the user account securely to your SQLite Prisma database schema
-    const newUser = await prisma.user.create({
-      data: {
-        email: email,
-        password: password, // For live scaling production, you would hash this string
-        isEmailVerified: false, // Must verify email first
-        isActiveCustomer: false, // Must pay before sending bulk email
-      },
-    });
-
-    console.log(`👤 New User Registered successfully: ${newUser.email}`);
-
-    // SUCCESS REDIRECT: Redirect them back to your pricing card view 
-    // to choose their custom daily email limits and pay
-    return res.send(`
+    console.log(`New user registered: ${user.email}`);
+    return res.status(201).send(`
       <html>
-        <body style="font-family:sans-serif; text-align:center; padding:50px; background:#0f172a; color:#fff;">
-          <h2 style="color:#10b981;">Account Created Successfully!</h2>
-          <p>We sent a simulation check token setup. You can now purchase your premium pass package below.</p>
-          <a href="https://vercel.app" style="color:#6366f1; font-weight:bold; text-decoration:none;">Go back to Pricing Dashboard &rarr;</a>
+        <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0f172a;color:#fff;">
+          <h2 style="color:#10b981;">Account Created Successfully</h2>
+          <p>Your account is registered. Choose a plan to activate it.</p>
+          <a href="/" style="color:#6366f1;font-weight:bold;text-decoration:none;">Go to the pricing page &rarr;</a>
         </body>
       </html>
     `);
-
   } catch (error) {
-    console.error('❌ Sign-up processing error:', error);
-    return res.status(500).send('Internal Server Processing Error');
+    if (error && error.code === 'P2002') {
+      return res.status(409).send('An account with this email already exists. Please log in.');
+    }
+
+    console.error('Sign-up processing error:', error);
+    return res.status(500).send('Account creation failed. Please try again later.');
   }
-}
+};

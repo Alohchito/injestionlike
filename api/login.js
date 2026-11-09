@@ -1,58 +1,88 @@
-import { PrismaClient } from '@prisma/client';
+const { PrismaClient } = require('@prisma/client');
+const { verifyPassword } = require('../utils/password');
 
 const prisma = new PrismaClient();
 
-export default async function handler(req, res) {
-  // Only accept POST requests from our HTML form
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    res.setHeader('Allow', 'POST');
+    return res.status(405).send('Method Not Allowed');
+  }
+
+  const body = req.body;
+  const email =
+    body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  const password = body && typeof body.password === 'string' ? body.password : '';
+
+  if (!email || !password) {
+    return res.status(400).send('Please enter both an email and password.');
   }
 
   try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).send('<h1>Error</h1><p>Please enter both email and password.</p>');
-    }
-
-    // Look for the user account record in your Prisma database
     const user = await prisma.user.findUnique({
       where: { email },
+      select: {
+        email: true,
+        status: true,
+        passwordHash: true,
+        subscriptions: {
+          where: {
+            status: 'ACTIVE',
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { emailsPer24Hours: true },
+        },
+      },
     });
 
-    // Check if the user exists and the password matches
-    if (!user || user.password !== password) {
-      return res.status(401).send('<h1>Authentication Failed</h1><p>Invalid email or password.</p>');
+    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      return res.status(401).send('Invalid email or password.');
     }
 
-    console.log(`🔒 User logged in successfully: ${user.email}`);
-
-    // If they haven't paid yet, redirect them to finish their checkout payment setup
-    if (!user.isActiveCustomer) {
+    if (user.status !== 'ACTIVE') {
       return res.send(`
         <html>
-          <body style="font-family:sans-serif; text-align:center; padding:50px; background:#0f172a; color:#fff;">
-            <h2 style="color:#6366f1;">Welcome Back!</h2>
-            <p>Your email is registered but your premium package plan is not active yet.</p>
-            <a href="https://vercel.app" style="color:#10b981; font-weight:bold; text-decoration:none;">Pick a Plan & Pay Now &rarr;</a>
+          <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0f172a;color:#fff;">
+            <h2 style="color:#6366f1;">Welcome Back</h2>
+            <p>Your account is registered but is not active yet.</p>
+            <a href="/" style="color:#10b981;font-weight:bold;text-decoration:none;">Choose a plan &rarr;</a>
           </body>
         </html>
       `);
     }
 
-    // SUCCESS: They are verified and have paid, grant access to the application bulk dashboard
+    const activeSubscription = user.subscriptions[0];
+    const planMessage = activeSubscription
+      ? `<p>Your daily sending limit is <strong>${activeSubscription.emailsPer24Hours} emails</strong>.</p>`
+      : '<p>Your account is active, but there is no active plan.</p>';
+
     return res.send(`
       <html>
-        <body style="font-family:sans-serif; text-align:center; padding:50px; background:#0f172a; color:#fff;">
-          <h2 style="color:#10b981;">🚀 Access Granted to Bulk Platform Dashboard!</h2>
-          <p>Logged in as: <strong>${user.email}</strong></p>
-          <p>Your current daily email limitation tier is: <strong>${user.dailyEmailLimit} emails/day</strong></p>
+        <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0f172a;color:#fff;">
+          <h2 style="color:#10b981;">Account Active</h2>
+          <p>Logged in as: <strong>${escapeHtml(user.email)}</strong></p>
+          ${planMessage}
+          <a href="/" style="color:#6366f1;font-weight:bold;text-decoration:none;">Return to the pricing page &rarr;</a>
         </body>
       </html>
     `);
-
   } catch (error) {
-    console.error('❌ Login processing error:', error);
-    return res.status(500).send('Internal Server Processing Error');
+    console.error('Login processing error:', error);
+    return res.status(500).send('Login failed. Please try again later.');
   }
+};
+
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
+    return entities[character];
+  });
 }
