@@ -17,3 +17,9 @@ Vercel runs `npm run build` to generate the Prisma Client. If this is a new,
 empty database, provision the rest of the application's schema before applying
 the migration. Do not set `DATABASE_URL` to a local SQLite file; the schema uses
 PostgreSQL.
+
+The signup and login endpoints are Vercel Node.js functions in `api/`. Vercel
+routes `/api/signup` and `/api/login` to these files automatically; no rewrite
+rules are needed. Set `DATABASE_URL` in the Vercel project's environment
+variables for the deployment environment, run `npx prisma migrate deploy`
+against that database, then redeploy.

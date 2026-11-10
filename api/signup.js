@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { hashPassword } = require('../utils/password');
+const { parseRequestBody } = require('../utils/request-body');
 
 const prisma = new PrismaClient();
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -10,7 +11,16 @@ module.exports = async function handler(req, res) {
     return res.status(405).send('Method Not Allowed');
   }
 
-  const body = req.body;
+  let body;
+  try {
+    body = parseRequestBody(
+      req.body,
+      String((req.headers && req.headers['content-type']) || ''),
+    );
+  } catch (error) {
+    return res.status(400).send('Invalid sign-up request body.');
+  }
+
   const email =
     body && typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   const password = body && typeof body.password === 'string' ? body.password : '';
@@ -27,8 +37,10 @@ module.exports = async function handler(req, res) {
     return res.status(400).send('Password must be between 8 and 128 characters.');
   }
 
+  let stage = 'password hashing';
   try {
     const passwordHash = await hashPassword(password);
+    stage = 'database insert';
     const user = await prisma.user.create({
       data: { email, passwordHash },
       select: { email: true },
@@ -49,7 +61,13 @@ module.exports = async function handler(req, res) {
       return res.status(409).send('An account with this email already exists. Please log in.');
     }
 
-    console.error('Sign-up processing error:', error);
+    console.error('Sign-up processing failed:', {
+      stage,
+      name: error instanceof Error ? error.name : 'UnknownError',
+      code: error && typeof error.code === 'string' ? error.code : undefined,
+      message: error instanceof Error ? error.message : String(error),
+      meta: error && error.meta,
+    });
     return res.status(500).send('Account creation failed. Please try again later.');
   }
 };
