@@ -2,6 +2,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".",
   "rewrites": [
+    { "source": "/api/create-checkout-session", "destination": "/api/disabled-payment" },
+    { "source": "/api/webhook", "destination": "/api/disabled-payment" },
     { "source": "/admin", "destination": "/admin.html" },
     { "source": "/terms", "destination": "/terms.html" },
     { "source": "/payment-request", "destination": "/payment-request.html" },

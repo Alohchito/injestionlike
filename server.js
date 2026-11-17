@@ -13,6 +13,7 @@ const adminHandler = require('./api/admin');
 const unsubscribeHandler = require('./api/unsubscribe');
 const contactHandler = require('./api/contact');
 const sendMailHandler = require('./api/send-mail');
+const disabledPaymentHandler = require('./api/disabled-payment');
 
 const app = express();
 
@@ -44,6 +45,8 @@ app.all('/api/admin', adminHandler);
 app.all('/api/unsubscribe', unsubscribeHandler);
 app.post('/api/contact', contactHandler);
 app.post('/api/send-mail', sendMailHandler);
+app.all('/api/create-checkout-session', disabledPaymentHandler);
+app.all('/api/webhook', disabledPaymentHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT}`));
