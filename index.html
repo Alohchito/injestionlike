@@ -96,6 +96,10 @@
             border-color: var(--primary);
             outline: none;
         }
+        input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+        }
         .auth-form {
             display: none;
         }
@@ -107,6 +111,28 @@
             font-size: 0.85rem;
             margin-top: 5px;
             display: none;
+        }
+        .status-message {
+            color: #cbd5e1;
+            min-height: 1.4em;
+            margin: 12px 0;
+        }
+        .workspace-panel {
+            display: none;
+            margin-bottom: 24px;
+            text-align: left;
+        }
+        textarea {
+            width: 100%;
+            min-height: 180px;
+            padding: 12px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            box-sizing: border-box;
+            font: inherit;
+            resize: vertical;
         }
         .card {
             background-color: var(--surface);
@@ -131,14 +157,39 @@
         .btn:hover {
             background-color: var(--primary-dark);
         }
+        .pricing-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin: 18px 0;
+        }
+        .plan-item {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            background: var(--background);
+        }
+        .plan-item strong, .plan-item span {
+            display: block;
+        }
+        .plan-item span { color: var(--text-muted); margin-top: 5px; }
+        .terms-note, .instructions {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            color: var(--text-muted);
+            margin: 12px 0;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
     <div class="container">
+        <nav aria-label="Site navigation"><a href="/">Home</a> · <a href="/terms">Terms</a> · <a href="/contact">Contact Us</a></nav>
         <h1>Verify & Send Bulk Newsletters Instantly</h1>
-        <p class="subtitle">Create secure email forwards and verify custom sender domains safely.</p>
+        <p class="subtitle">A technical email relay for your own verified sender address. Online card checkout is coming soon; plans are currently paid through local agents or direct transfer.</p>
         
-        <div class="auth-container">
+        <div id="authContainer" class="auth-container">
             <div class="auth-tabs">
                 <button id="loginTabBtn" class="tab-btn active" onclick="switchTab('login')">Log In</button>
                 <button id="signupTabBtn" class="tab-btn" onclick="switchTab('signup')">Sign Up</button>
@@ -170,39 +221,162 @@
                     <input type="password" id="confirmPassword" placeholder="Type password a second time" required>
                     <div id="passwordError" class="error-msg">Passwords do not match. Please re-type carefully.</div>
                 </div>
-                <button type="submit" class="btn" style="margin-top: 10px;">Create Account & Verify Email</button>
+                <button type="submit" class="btn" style="margin-top: 10px;">Create Account</button>
             </form>
+            <form id="verificationForm" class="auth-form" action="/api/signup" method="POST">
+                <input type="hidden" name="action" value="verify">
+                <div class="form-group">
+                    <label for="verificationEmail">Email Address</label>
+                    <input type="email" id="verificationEmail" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="verificationCode">Six-digit verification code</label>
+                    <input type="text" id="verificationCode" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+                </div>
+                <button type="submit" class="btn">Verify email</button>
+                <button type="button" class="btn" id="resendVerificationButton" style="margin-top: 10px;">Resend verification code</button>
+            </form>
+            <p id="authMessage" class="status-message" role="status" aria-live="polite"></p>
         </div>
 
-        <div class="card">
-            <h2>Select Your Subscription Plan</h2>
-            <form action="/api/create-checkout-session" method="POST">
-                <div class="form-group" style="text-align: left;">
-                    <label for="volume_tier">Daily Email Sending Limit</label>
-                    <select id="volume_tier" name="volume_tier" required>
-                        <option value="1000">1,000 Emails / day ($19 base rate)</option>
-                        <option value="2000">2,000 Emails / day ($35/month)</option>
-                        <option value="3000">3,000 Emails / day ($45/month)</option>
-                        <option value="5000">5,000 Emails / day ($65/month)</option>
-                        <option value="10000">10,000 Emails / day ($85/month)</option>
-                    </select>
-                </div>
+        <section class="card" id="pricingCatalog">
+            <h2>Plans & pricing</h2>
+            <p>Monthly rates in USD. Multi-month totals are the monthly rate multiplied by the number of months; there are no term discounts.</p>
+            <div class="pricing-list" id="pricingList"></div>
+            <p>Online card checkout is coming soon. Payment is currently arranged through local agents or direct transfer.</p>
+        </section>
 
-                <div class="form-group" style="text-align: left; margin-bottom: 25px;">
-                    <label for="months">Subscription Plan Duration</label>
-                    <select id="months" name="months" required>
-                        <option value="1">1 Month (Flexible rate)</option>
-                        <option value="3">3 Months (15% Upfront discount)</option>
-                        <option value="6">6 Months (25% Upfront discount)</option>
-                        <option value="12">12 Months (35% Upfront discount)</option>
+        <section id="accountDashboard" class="card workspace-panel">
+            <h2>Account dashboard</h2>
+            <p>Signed in as <strong id="accountEmail"></strong></p>
+            <p id="accountPlan"></p>
+            <p id="accountUsage"></p>
+            <a id="adminLink" href="/admin" hidden>Open administrator dashboard</a>
+            <form id="activationForm" action="/api/activation-code" method="POST">
+                <h3>Enter activation code</h3>
+                <p>Sending stays locked until a paid activation code is redeemed.</p>
+                <div class="form-group">
+                    <label for="activationCodeInput">Activation code</label>
+                    <input type="text" id="activationCodeInput" name="code" autocomplete="off" pattern="ACT-[0-9]+K-[A-Fa-f0-9]{4}(-[A-Fa-f0-9]{4}){3}" required>
+                </div>
+                <button class="btn" type="submit">Redeem activation code</button>
+                <p id="activationMessage" class="status-message" role="status" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section id="mailerPanel" class="card workspace-panel">
+            <h2>Premium message composer</h2>
+            <p>Relay delivery is disabled until opt-out handling, quota reservations, and a trusted outbound provider are fully configured.</p>
+            <form id="mailerForm" action="/api/send-mail" method="POST">
+                <div class="form-group">
+                    <label for="mailFrom">From</label>
+                    <input type="email" id="mailFrom" name="from" required>
+                </div>
+                <div class="form-group">
+                    <label for="mailTo">To</label>
+                    <input type="text" id="mailTo" name="to" placeholder="recipient@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="mailCc">Cc</label>
+                    <input type="text" id="mailCc" name="cc">
+                </div>
+                <div class="form-group">
+                    <label for="mailBcc">Bcc</label>
+                    <input type="text" id="mailBcc" name="bcc">
+                </div>
+                <div class="form-group">
+                    <label for="mailSubject">Subject</label>
+                    <input type="text" id="mailSubject" name="subject" required>
+                </div>
+                <div class="form-group">
+                    <label for="mailBody">Message Body</label>
+                    <textarea id="mailBody" name="body" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="mailReplyTo">Reply-To</label>
+                    <input type="email" id="mailReplyTo" name="replyTo">
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" name="recipientConsent" value="true" required>
+                        I confirm all recipients have consented to receive emails from me.</label>
+                </div>
+                <button type="submit" class="btn">Submit message</button>
+                <p id="mailerMessage" class="status-message" role="status" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section id="orderPanel" class="card workspace-panel">
+            <h2>Request a plan</h2>
+            <p>Choose your plan to continue to the private payment request form. Our billing team will email customized payment instructions.</p>
+            <form id="choosePlanForm">
+                <div class="form-group">
+                    <label for="orderTier">Plan tier</label>
+                    <select id="orderTier" name="dailyLimit" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="orderDuration">Duration</label>
+                    <select id="orderDuration" name="durationMonths" required>
+                        <option value="1">1 month</option>
+                        <option value="3">3 months</option>
+                        <option value="6">6 months</option>
+                        <option value="12">12 months</option>
                     </select>
                 </div>
-                <button type="submit" class="btn">Get Activation Code Now</button>
+                <p id="orderTotal"></p>
+                <button type="submit" class="btn">Continue to payment request</button>
             </form>
-        </div>
+        </section>
+
+        <section class="terms-note">
+            <h2>Relay and recipient-consent notice</h2>
+            <p>Injestionlike is a technical email forwarding/relay service, not an email account provider. You must use an email address you own and have verified. You are responsible for obtaining explicit recipient permission and complying with applicable anti-spam laws. Recipients can opt out of mail from your specific sender address; they are not required to block our relay domain.</p>
+            <p>We do not endorse user campaign content. You remain responsible for your content, recipients, and legal compliance.</p>
+            <p><a href="/terms">Read the Terms of Service</a></p>
+        </section>
+        <footer><a href="/contact">Contact Us</a> · <a href="/terms">Terms of Service</a></footer>
     </div>
 
     <script>
+        let plans = [];
+        const formatUsd = (amount) => `$${Number(amount).toFixed(2)}`;
+
+        async function loadPlans() {
+            const response = await fetch('/api/plans');
+            if (!response.ok) throw new Error('Pricing is temporarily unavailable.');
+            const catalog = await response.json();
+            plans = catalog.plans;
+            const pricingList = document.getElementById('pricingList');
+            const tierSelect = document.getElementById('orderTier');
+            pricingList.replaceChildren();
+            tierSelect.replaceChildren();
+            for (const plan of plans) {
+                const item = document.createElement('div');
+                item.className = 'plan-item';
+                item.textContent = `Tier ${plan.tier}`;
+                const details = document.createElement('span');
+                details.textContent = `${plan.dailyLimit.toLocaleString()} per day · ${plan.batchLimit.toLocaleString()} per send · ${formatUsd(plan.monthlyPriceUsd)}/month`;
+                item.appendChild(details);
+                pricingList.appendChild(item);
+                const option = document.createElement('option');
+                option.value = plan.dailyLimit;
+                option.textContent = `Tier ${plan.tier} — ${plan.dailyLimit.toLocaleString()}/day, ${plan.batchLimit.toLocaleString()}/send — ${formatUsd(plan.monthlyPriceUsd)}/month`;
+                tierSelect.appendChild(option);
+            }
+            updateOrderTotal();
+        }
+
+        function updateOrderTotal() {
+            const plan = plans.find((item) =>
+                item.dailyLimit === Number(document.getElementById('orderTier').value));
+            const months = Number(document.getElementById('orderDuration').value);
+            document.getElementById('orderTotal').textContent = plan
+                ? `Total: ${formatUsd(plan.monthlyPriceUsd * months)} (${months} × ${formatUsd(plan.monthlyPriceUsd)}; no term discount)`
+                : '';
+        }
+
+        document.getElementById('orderTier').addEventListener('change', updateOrderTotal);
+        document.getElementById('orderDuration').addEventListener('change', updateOrderTotal);
+
         function switchTab(type) {
             const loginForm = document.getElementById('loginForm');
             const signupForm = document.getElementById('signupForm');
@@ -234,6 +408,169 @@
             error.style.display = 'none';
             return true;
         }
+
+        function showAuthMessage(message) {
+            document.getElementById('authMessage').textContent = message || '';
+        }
+
+        async function submitJsonForm(form, extra = {}) {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ ...Object.fromEntries(new FormData(form)), ...extra })
+            });
+            const payload = await response.json().catch(() => ({}));
+            return { response, payload };
+        }
+
+        document.getElementById('signupForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!validatePasswords()) return;
+            showAuthMessage('Creating your account…');
+            try {
+                const { response, payload } = await submitJsonForm(event.currentTarget);
+                if (!response.ok) throw new Error(payload.error || 'Sign-up failed.');
+                document.getElementById('verificationEmail').value =
+                    document.getElementById('signupEmail').value.trim().toLowerCase();
+                if (payload.testVerificationCode) {
+                    document.getElementById('verificationCode').value = payload.testVerificationCode;
+                }
+                document.getElementById('signupForm').classList.remove('active');
+                document.getElementById('verificationForm').classList.add('active');
+                showAuthMessage(payload.testVerificationCode
+                    ? 'Sandbox verification code is filled in below. Submit it to verify.'
+                    : payload.message);
+            } catch (error) {
+                showAuthMessage(error.message);
+            }
+        });
+
+        document.getElementById('verificationForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            showAuthMessage('Verifying your email…');
+            try {
+                const { response, payload } = await submitJsonForm(event.currentTarget);
+                if (!response.ok) throw new Error(payload.error || 'Verification failed.');
+                window.location.assign(payload.redirect || '/');
+            } catch (error) {
+                showAuthMessage(error.message);
+            }
+        });
+
+        document.getElementById('resendVerificationButton').addEventListener('click', async () => {
+            showAuthMessage('Requesting a new verification code…');
+            try {
+                const response = await fetch('/api/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        action: 'resend',
+                        email: document.getElementById('verificationEmail').value.trim().toLowerCase()
+                    })
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.error || 'Could not resend verification code.');
+                if (payload.testVerificationCode) {
+                    document.getElementById('verificationCode').value = payload.testVerificationCode;
+                }
+                showAuthMessage(payload.message);
+            } catch (error) {
+                showAuthMessage(error.message);
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            showAuthMessage('Signing in…');
+            try {
+                const { response, payload } = await submitJsonForm(event.currentTarget);
+                if (!response.ok) {
+                    if (payload.needsVerification && payload.email) {
+                        document.getElementById('verificationEmail').value = payload.email;
+                        document.getElementById('loginForm').classList.remove('active');
+                        document.getElementById('verificationForm').classList.add('active');
+                    }
+                    throw new Error(payload.error || 'Login failed.');
+                }
+                window.location.assign(payload.redirect || '/');
+            } catch (error) {
+                showAuthMessage(error.message);
+            }
+        });
+
+        document.getElementById('mailerForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const message = document.getElementById('mailerMessage');
+            message.textContent = 'Checking account and sender authorization…';
+            try {
+                const { response, payload } = await submitJsonForm(event.currentTarget);
+                message.textContent = payload.error ||
+                    (response.ok ? 'Message accepted.' : 'Message was not sent.');
+            } catch (error) {
+                message.textContent = error.message || 'Message was not sent.';
+            }
+        });
+
+        document.getElementById('choosePlanForm').addEventListener('submit', (event) => {
+            event.preventDefault();
+            const query = new URLSearchParams({
+                tier: document.getElementById('orderTier').value,
+                months: document.getElementById('orderDuration').value
+            });
+            window.location.assign(`/payment-request?${query}`);
+        });
+
+        document.getElementById('activationForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const message = document.getElementById('activationMessage');
+            message.textContent = 'Redeeming activation code…';
+            try {
+                const { response, payload } = await submitJsonForm(event.currentTarget);
+                if (!response.ok) throw new Error(payload.error || 'Activation failed.');
+                message.textContent = payload.message;
+                window.location.reload();
+            } catch (error) {
+                message.textContent = error.message || 'Activation failed.';
+            }
+        });
+
+        async function loadAccountWorkspace() {
+            try {
+                const response = await fetch('/api/account', {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!response.ok) return;
+                const account = await response.json();
+                document.getElementById('authContainer').style.display = 'none';
+                document.getElementById('accountDashboard').style.display = 'block';
+                document.getElementById('accountEmail').textContent = account.email;
+                document.getElementById('mailFrom').value = account.email;
+                document.getElementById('accountPlan').textContent = account.subscription
+                    ? `Active plan: ${account.subscription.emailsPer24Hours.toLocaleString()} emails/day · expires ${new Date(account.subscription.expiresAt).toLocaleDateString()}`
+                    : 'No active subscription. Sending is locked until a paid activation code is redeemed.';
+                document.getElementById('accountUsage').textContent = account.subscription
+                    ? `Rolling 24-hour use: ${account.subscription.usedLast24Hours.toLocaleString()} / ${account.subscription.emailsPer24Hours.toLocaleString()} · batch maximum ${account.subscription.batchLimit.toLocaleString()}`
+                    : '';
+                document.getElementById('orderPanel').style.display = 'block';
+                if (account.isAdmin) document.getElementById('adminLink').hidden = false;
+                if (account.subscription) {
+                    document.getElementById('mailerPanel').style.display = 'block';
+                }
+            } catch (error) {
+                showAuthMessage('Account information could not be loaded.');
+            }
+        }
+
+        loadPlans().catch((error) => {
+            document.getElementById('pricingList').textContent = error.message;
+        });
+        loadAccountWorkspace();
     </script>
 </body>
 </html>

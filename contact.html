@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contact Us | Injestionlike</title>
+  <style>
+    :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #0f172a; color: #f8fafc; }
+    body { max-width: 680px; margin: 32px auto; padding: 0 18px; }
+    section { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; }
+    label { display: block; margin: 14px 0; color: #cbd5e1; }
+    input, textarea, button { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 11px; border: 1px solid #475569; border-radius: 7px; color: inherit; background: #0f172a; font: inherit; }
+    textarea { min-height: 170px; }
+    button { background: #4f46e5; border: 0; cursor: pointer; }
+    .notice { min-height: 1.5em; color: #cbd5e1; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Home</a></p>
+  <section>
+    <h1>Contact Us</h1>
+    <p>Send our team a message using this form.</p>
+    <form id="contactForm">
+      <label>Name<input name="name" autocomplete="name" maxlength="160" required></label>
+      <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Subject<input name="subject" maxlength="200" required></label>
+      <label>Message<textarea name="message" minlength="5" maxlength="5000" required></textarea></label>
+      <button type="submit">Send message</button>
+    </form>
+    <p id="status" class="notice" role="status" aria-live="polite"></p>
+  </section>
+  <script>
+    const form = document.getElementById('contactForm');
+    const status = document.getElementById('status');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      status.textContent = 'Sending your message…';
+      try {
+        const response = await fetch('/api/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(Object.fromEntries(new FormData(form)))
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Your message could not be sent.');
+        form.hidden = true;
+        status.textContent = payload.message;
+      } catch (error) {
+        status.textContent = error.message || 'Your message could not be sent.';
+      }
+    });
+  </script>
+</body>
+</html>

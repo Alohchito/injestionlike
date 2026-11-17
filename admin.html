@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Injestionlike Admin</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; }
+    body { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    section { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin: 18px 0; overflow-x: auto; }
+    input, select, textarea, button { font: inherit; color: inherit; background: #0f172a; border: 1px solid #475569; border-radius: 6px; padding: 9px; }
+    input, select, textarea { box-sizing: border-box; width: 100%; }
+    textarea { min-height: 90px; }
+    button { cursor: pointer; background: #4f46e5; border: 0; margin: 3px; }
+    label { display: block; margin: 8px 0; }
+    table { border-collapse: collapse; width: 100%; min-width: 700px; }
+    th, td { padding: 9px; border-bottom: 1px solid #334155; text-align: left; vertical-align: top; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+    .notice { color: #cbd5e1; min-height: 1.4em; white-space: pre-wrap; }
+    .muted { color: #94a3b8; }
+    dialog { max-width: 620px; width: calc(100% - 48px); color: #f8fafc; background: #1e293b; border: 1px solid #475569; border-radius: 12px; }
+    dialog::backdrop { background: rgba(0, 0, 0, .7); }
+  </style>
+</head>
+<body>
+  <h1>Administrator dashboard</h1>
+  <p><a href="/">Return to the service</a></p>
+  <p id="status" class="notice" role="status">Checking administrator access…</p>
+
+  <section>
+    <h2>Pending orders</h2>
+    <p id="pendingCount" class="muted"></p>
+    <div id="orders"></div>
+  </section>
+
+  <dialog id="paymentDialog">
+    <h2>Send payment instructions</h2>
+    <p id="paymentCustomer" class="muted"></p>
+    <form id="paymentForm">
+      <input type="hidden" name="orderId">
+      <label>Saved template
+        <select id="templateSelect"><option value="">Write custom instructions</option></select>
+      </label>
+      <label>Email subject<input name="subject" maxlength="200" required></label>
+      <label>Payment instructions<textarea name="instructions" maxlength="8000" required></textarea></label>
+      <label>Save as template (optional)<input name="templateName" maxlength="100"></label>
+      <button type="submit">Send payment instructions</button>
+      <button id="closePaymentDialog" type="button">Cancel</button>
+    </form>
+    <p id="paymentStatus" class="notice" role="status" aria-live="polite"></p>
+  </dialog>
+
+  <section>
+    <h2>Generate activation code</h2>
+    <form id="codeForm">
+      <div class="grid">
+        <label>Plan tier
+          <select name="dailyLimit" required>
+            <option value="1000">1,000/day</option><option value="2000">2,000/day</option>
+            <option value="3000">3,000/day</option><option value="4000">4,000/day</option>
+            <option value="5000">5,000/day</option><option value="6000">6,000/day</option>
+            <option value="7000">7,000/day</option><option value="8000">8,000/day</option>
+            <option value="9000">9,000/day</option><option value="10000">10,000/day</option>
+          </select>
+        </label>
+        <label>Duration
+          <select name="durationMonths" required>
+            <option value="1">1 month</option><option value="3">3 months</option>
+            <option value="6">6 months</option><option value="12">12 months</option>
+          </select>
+        </label>
+        <label>Assign to email (optional)
+          <input name="email" type="email" placeholder="customer@example.com">
+        </label>
+        <label>Paid order (optional)
+          <select name="orderId"><option value="">Generate a general code</option></select>
+        </label>
+      </div>
+      <button type="submit">Generate single-use code</button>
+    </form>
+    <p id="codeMessage" class="notice" aria-live="polite"></p>
+    <button id="copyCode" type="button" hidden>Copy Code &amp; Message</button>
+    <div id="codes"></div>
+  </section>
+
+  <section>
+    <h2>Payment agents and fallback instructions</h2>
+    <form id="agentForm">
+      <input type="hidden" name="id">
+      <div class="grid">
+        <label>Country code (blank for fallback)<input name="countryCode" maxlength="2" placeholder="BF"></label>
+        <label>Region<input name="region"></label>
+        <label>City<input name="city"></label>
+        <label>Payment method
+          <select name="paymentMethod">
+            <option value="MOBILE_MONEY">Mobile Money</option><option value="BANK_TRANSFER">Bank Transfer</option>
+            <option value="WESTERN_UNION">Western Union</option><option value="MONEYGRAM">MoneyGram</option>
+            <option value="INTERNATIONAL_WIRE">International Wire</option>
+            <option value="IN_PERSON_CASH">In-person cash</option><option value="OTHER">Other</option>
+          </select>
+        </label>
+        <label>Recipient name<input name="recipientName"></label>
+        <label>Account / receiving reference<input name="accountReference"></label>
+        <label>Phone<input name="contactPhone"></label>
+        <label>WhatsApp<input name="whatsapp"></label>
+        <label>Priority<input name="priority" type="number" value="100"></label>
+      </div>
+      <label>Instructions<textarea name="instructions" required></textarea></label>
+      <label><input name="isFallback" type="checkbox" style="width:auto"> Global fallback (no country)</label>
+      <label><input name="isActive" type="checkbox" style="width:auto" checked> Active</label>
+      <button type="submit">Save payment instructions</button>
+      <button id="clearAgent" type="button">Clear form</button>
+    </form>
+    <div id="agents"></div>
+  </section>
+
+  <section>
+    <h2>Users, subscription status, and rolling usage</h2>
+    <div id="users"></div>
+  </section>
+
+  <script>
+    const status = document.getElementById('status');
+    let lastPendingCount = null;
+    let generatedMessage = '';
+    let instructionTemplates = [];
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+        ...options
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
+      return payload;
+    }
+    function element(tag, text) {
+      const node = document.createElement(tag);
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    function table(headers, rows) {
+      const tableNode = element('table');
+      const head = element('thead');
+      const headRow = element('tr');
+      headers.forEach((value) => headRow.appendChild(element('th', value)));
+      head.appendChild(headRow);
+      tableNode.appendChild(head);
+      const body = element('tbody');
+      rows.forEach((values) => {
+        const row = element('tr');
+        values.forEach((value) => row.appendChild(value instanceof Node ? value : element('td', String(value ?? ''))));
+        body.appendChild(row);
+      });
+      tableNode.appendChild(body);
+      return tableNode;
+    }
+    async function loadOrders() {
+      const result = await api('/api/admin?view=orders');
+      const orders = result.orders;
+      window.latestOrders = orders;
+      const paidOrders = orders.filter((order) => order.status === 'PAID');
+      const orderSelect = document.querySelector('#codeForm [name="orderId"]');
+      const selectedOrder = orderSelect.value;
+      const defaultOption = element('option', 'Generate a general code');
+      defaultOption.value = '';
+      orderSelect.replaceChildren(defaultOption);
+      paidOrders.forEach((order) => {
+        const option = element('option', `${order.email} · ${Number(order.dailyLimit).toLocaleString()}/day · ${order.id}`);
+        option.value = order.id;
+        orderSelect.appendChild(option);
+      });
+      orderSelect.value = selectedOrder;
+      const count = orders.filter((order) => order.status === 'PENDING').length;
+      document.getElementById('pendingCount').textContent = `${count} order(s) awaiting payment confirmation. This list refreshes every 30 seconds.`;
+      if (lastPendingCount !== null && count > lastPendingCount) {
+        status.textContent = `New pending order alert: ${count - lastPendingCount} new request(s).`;
+      }
+      lastPendingCount = count;
+      const rows = orders.map((order) => {
+        const action = element('td');
+        const reply = element('button', 'Send Payment Instructions');
+        reply.addEventListener('click', () => {
+          const form = document.getElementById('paymentForm');
+          form.elements.orderId.value = order.id;
+          form.elements.subject.value = 'Your Injestionlike payment instructions';
+          form.elements.instructions.value = '';
+          form.elements.templateName.value = '';
+          document.getElementById('templateSelect').value = '';
+          document.getElementById('paymentCustomer').textContent =
+            `${order.customerName} · ${order.customerEmail} · ${order.countryCode} ${order.city} · ${order.paymentMethod}`;
+          document.getElementById('paymentStatus').textContent = '';
+          document.getElementById('paymentDialog').showModal();
+        });
+        action.appendChild(reply);
+        if (order.status === 'PENDING') {
+          const button = element('button', 'Mark as paid');
+          button.addEventListener('click', async () => {
+            try {
+              await api('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'markPaid', orderId: order.id }) });
+              await refresh();
+            } catch (error) { status.textContent = error.message; }
+          });
+          action.appendChild(button);
+        }
+        return [
+          element('td', `${order.customerName} · ${order.customerEmail}\n${order.phoneWhatsapp}\n${Number(order.dailyLimit).toLocaleString()}/day for ${order.durationMonths} month(s) · USD ${Number(order.amountUsd).toFixed(2)}\n${order.countryCode} ${order.city}\n${new Date(order.requestedAt).toLocaleString()}\nOrder ID: ${order.id}`),
+          element('td', `${order.paymentMethod} · ${order.status}${order.additionalNotes ? `\nNotes: ${order.additionalNotes}` : ''}`),
+          action
+        ];
+      });
+      const container = document.getElementById('orders');
+      container.replaceChildren(table(['Customer / contact / plan / location / time', 'Payment / status / notes', 'Action'], rows));
+    }
+    async function loadAgents() {
+      const { agents } = await api('/api/admin?view=agents');
+      const container = document.getElementById('agents');
+      const rows = agents.map((agent) => {
+        const action = element('td');
+        const edit = element('button', 'Edit');
+        edit.addEventListener('click', () => {
+          const form = document.getElementById('agentForm');
+          Object.entries(agent).forEach(([key, value]) => {
+            const input = form.elements[key];
+            if (input) input.type === 'checkbox' ? input.checked = Boolean(value) : input.value = value ?? '';
+          });
+        });
+        const remove = element('button', 'Delete');
+        remove.addEventListener('click', async () => {
+          if (!window.confirm('Delete these payment instructions?')) return;
+          try { await api('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'deleteAgent', id: agent.id }) }); await refresh(); }
+          catch (error) { status.textContent = error.message; }
+        });
+        action.append(edit, remove);
+        return [
+          element('td', `${agent.isFallback ? 'GLOBAL' : agent.countryCode} · ${agent.paymentMethod} · ${agent.region || ''} ${agent.city || ''}`),
+          element('td', `${agent.recipientName || ''}\n${agent.accountReference || ''}\n${agent.instructions}`),
+          action
+        ];
+      });
+      container.replaceChildren(table(['Location / method', 'Receiving details', 'Actions'], rows));
+    }
+    async function loadUsers() {
+      const { users } = await api('/api/admin?view=users');
+      const rows = users.map((user) => [
+        user.email,
+        user.dailyLimit ? `${Number(user.dailyLimit).toLocaleString()}/day` : 'No active plan',
+        `${user.usedLast24Hours} used`,
+        user.expiresAt ? new Date(user.expiresAt).toLocaleString() : '—'
+      ]);
+      document.getElementById('users').replaceChildren(table(['Account', 'Plan', 'Rolling 24-hour use', 'Expires'], rows));
+    }
+    async function loadCodes() {
+      const { codes } = await api('/api/admin?view=codes');
+      const rows = codes.map((code) => [
+        code.codePrefix, `${Number(code.dailyLimit).toLocaleString()}/day × ${code.durationMonths} month(s)`,
+        code.status, code.assignedEmail || code.redeemedByEmail || 'General single-use',
+        code.expiresAt ? new Date(code.expiresAt).toLocaleString() : '—'
+      ]);
+      document.getElementById('codes').replaceChildren(table(['Code prefix', 'Plan', 'Status', 'Account', 'Expires'], rows));
+    }
+    async function loadTemplates() {
+      const { templates } = await api('/api/admin?view=templates');
+      instructionTemplates = templates;
+      const select = document.getElementById('templateSelect');
+      const blank = element('option', 'Write custom instructions');
+      blank.value = '';
+      select.replaceChildren(blank);
+      templates.forEach((template) => {
+        const option = element('option', template.name);
+        option.value = template.id;
+        select.appendChild(option);
+      });
+    }
+    async function refresh() {
+      await Promise.all([loadOrders(), loadAgents(), loadUsers(), loadCodes(), loadTemplates()]);
+      status.textContent = 'Administrator data loaded.';
+    }
+    document.getElementById('codeForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const body = Object.fromEntries(new FormData(form));
+      body.action = 'generateCode';
+      for (const key of ['dailyLimit', 'durationMonths']) body[key] = Number(body[key]);
+      try {
+        const result = await api('/api/admin', { method: 'POST', body: JSON.stringify(body) });
+        generatedMessage = `Your Injestionlike plan is ${Number(result.dailyLimit).toLocaleString()} emails/day (${Number(result.batchLimit).toLocaleString()} per send) for ${result.durationMonths} month(s), USD ${Number(result.amountUsd).toFixed(2)}. Activation code: ${result.code}`;
+        document.getElementById('codeMessage').textContent = generatedMessage;
+        document.getElementById('copyCode').hidden = false;
+        await loadCodes();
+      } catch (error) { document.getElementById('codeMessage').textContent = error.message; }
+    });
+    document.getElementById('copyCode').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(generatedMessage); status.textContent = 'Activation code and customer message copied.'; }
+      catch (error) { status.textContent = 'Clipboard access failed. Select and copy the message above.'; }
+    });
+    document.getElementById('templateSelect').addEventListener('change', (event) => {
+      const template = instructionTemplates.find((item) => item.id === event.target.value);
+      if (!template) return;
+      const form = document.getElementById('paymentForm');
+      form.elements.subject.value = template.subject;
+      form.elements.instructions.value = template.body;
+    });
+    document.getElementById('paymentForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const paymentStatus = document.getElementById('paymentStatus');
+      paymentStatus.textContent = 'Sending instructions…';
+      try {
+        const result = await api('/api/admin', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'sendPaymentInstructions',
+            orderId: form.elements.orderId.value,
+            subject: form.elements.subject.value,
+            instructions: form.elements.instructions.value
+          })
+        });
+        const templateName = form.elements.templateName.value.trim();
+        if (templateName) {
+          await api('/api/admin', {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'saveTemplate',
+              name: templateName,
+              subject: form.elements.subject.value,
+              body: form.elements.instructions.value
+            })
+          });
+          await loadTemplates();
+        }
+        paymentStatus.textContent = `Payment instructions sent to ${result.email}.`;
+      } catch (error) {
+        paymentStatus.textContent = error.message;
+      }
+    });
+    document.getElementById('closePaymentDialog').addEventListener('click', () => {
+      document.getElementById('paymentDialog').close();
+    });
+    document.getElementById('agentForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const body = Object.fromEntries(new FormData(form));
+      body.action = 'saveAgent';
+      body.isFallback = form.elements.isFallback.checked;
+      body.isActive = form.elements.isActive.checked;
+      body.priority = Number(body.priority);
+      try { await api('/api/admin', { method: 'POST', body: JSON.stringify(body) }); form.reset(); form.elements.priority.value = 100; await refresh(); }
+      catch (error) { status.textContent = error.message; }
+    });
+    document.getElementById('clearAgent').addEventListener('click', () => {
+      const form = document.getElementById('agentForm');
+      form.reset(); form.elements.id.value = ''; form.elements.priority.value = 100;
+      form.elements.isActive.checked = true;
+    });
+    document.querySelector('#codeForm [name="orderId"]').addEventListener('change', (event) => {
+      const order = window.latestOrders && window.latestOrders.find((item) => item.id === event.target.value);
+      if (!order) return;
+      const form = document.getElementById('codeForm');
+      form.elements.dailyLimit.value = order.dailyLimit;
+      form.elements.durationMonths.value = order.durationMonths;
+      form.elements.email.value = order.email;
+    });
+    refresh().catch((error) => { status.textContent = error.message; });
+    window.setInterval(() => loadOrders().catch((error) => { status.textContent = error.message; }), 30000);
+  </script>
+</body>
+</html>

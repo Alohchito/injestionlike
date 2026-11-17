@@ -1,7 +1,19 @@
 const { PrismaClient } = require('@prisma/client');
 const { verifyPassword } = require('../utils/password');
+const { createClearedSessionCookie, createSessionCookie } = require('../utils/session');
 
 const prisma = new PrismaClient();
+
+function isJsonRequest(req) {
+  return String(req.headers && req.headers.accept || '').includes('application/json') ||
+    String(req.headers && req.headers['content-type'] || '').includes('application/json');
+}
+
+function respond(req, res, status, payload) {
+  if (isJsonRequest(req)) return res.status(status).json(payload);
+  if (payload.redirect) return res.redirect(303, payload.redirect);
+  return res.status(status).send(payload.error || payload.message);
+}
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -15,19 +27,25 @@ module.exports = async function handler(req, res) {
   const password = body && typeof body.password === 'string' ? body.password : '';
 
   if (!email || !password) {
-    return res.status(400).send('Please enter both an email and password.');
+    return respond(req, res, 400, {
+      error: 'Please enter both an email and password.',
+    });
   }
 
   try {
+    createSessionCookie('session-secret-check');
     const user = await prisma.user.findUnique({
       where: { email },
       select: {
+        id: true,
         email: true,
         status: true,
         passwordHash: true,
+        emailVerifiedAt: true,
         subscriptions: {
           where: {
             status: 'ACTIVE',
+            paymentStatus: 'PAID',
             OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
           },
           orderBy: { createdAt: 'desc' },
@@ -38,51 +56,39 @@ module.exports = async function handler(req, res) {
     });
 
     if (!user || !(await verifyPassword(password, user.passwordHash))) {
-      return res.status(401).send('Invalid email or password.');
+      res.setHeader('Set-Cookie', createClearedSessionCookie());
+      return respond(req, res, 401, { error: 'Invalid email or password.' });
+    }
+    if (user.status === 'SUSPENDED') {
+      res.setHeader('Set-Cookie', createClearedSessionCookie());
+      return respond(req, res, 403, { error: 'This account is suspended.' });
+    }
+    if (!user.emailVerifiedAt) {
+      res.setHeader('Set-Cookie', createClearedSessionCookie());
+      return respond(req, res, 403, {
+        error: 'Verify your email before logging in.',
+        needsVerification: true,
+        email: user.email,
+      });
     }
 
-    if (user.status !== 'ACTIVE') {
-      return res.send(`
-        <html>
-          <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0f172a;color:#fff;">
-            <h2 style="color:#6366f1;">Welcome Back</h2>
-            <p>Your account is registered but is not active yet.</p>
-            <a href="/" style="color:#10b981;font-weight:bold;text-decoration:none;">Choose a plan &rarr;</a>
-          </body>
-        </html>
-      `);
-    }
-
-    const activeSubscription = user.subscriptions[0];
-    const planMessage = activeSubscription
-      ? `<p>Your daily sending limit is <strong>${activeSubscription.emailsPer24Hours} emails</strong>.</p>`
-      : '<p>Your account is active, but there is no active plan.</p>';
-
-    return res.send(`
-      <html>
-        <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0f172a;color:#fff;">
-          <h2 style="color:#10b981;">Account Active</h2>
-          <p>Logged in as: <strong>${escapeHtml(user.email)}</strong></p>
-          ${planMessage}
-          <a href="/" style="color:#6366f1;font-weight:bold;text-decoration:none;">Return to the pricing page &rarr;</a>
-        </body>
-      </html>
-    `);
+    res.setHeader('Set-Cookie', createSessionCookie(user.id));
+    const hasPremiumPlan = user.status === 'ACTIVE' && user.subscriptions.length > 0;
+    return respond(req, res, 200, {
+      message: hasPremiumPlan
+        ? 'Signed in. Your mailer is ready.'
+        : 'Signed in. Request a plan or redeem a paid activation code to unlock sending.',
+      email: user.email,
+      redirect: '/',
+    });
   } catch (error) {
-    console.error('Login processing error:', error);
-    return res.status(500).send('Login failed. Please try again later.');
+    console.error('Login processing error:', {
+      name: error instanceof Error ? error.name : 'UnknownError',
+      code: error && typeof error.code === 'string' ? error.code : undefined,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return respond(req, res, 500, {
+      error: 'Login failed. Please try again later.',
+    });
   }
 };
-
-function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    };
-    return entities[character];
-  });
-}

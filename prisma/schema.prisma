@@ -31,6 +31,9 @@ enum PaymentStatus {
 enum BillingCurrency {
   USD
   EUR
+  XOF
+  GHS
+  NGN
 }
 
 enum SenderVerificationStatus {
@@ -72,90 +75,106 @@ enum InactivityActionType {
 }
 
 model User {
-  id                    String               @id @default(cuid())
-  email                 String               @unique
-  passwordHash          String?
-  countryCode           String?              @db.VarChar(2)
+  id                          String        @id @default(cuid())
+  email                       String        @unique
+  passwordHash                String?
+  emailVerifiedAt             DateTime?     @db.Timestamptz(6)
+  emailVerificationCodeHash   String?
+  emailVerificationExpiresAt  DateTime?     @db.Timestamptz(6)
+  emailVerificationSentAt     DateTime?     @db.Timestamptz(6)
+  emailVerificationAttempts   Int           @default(0)
+  activationCode              String?       @unique
+  countryCode                 String?       @db.VarChar(2)
   // Store a keyed hash rather than a raw IP address to minimize retained personal data.
-  signupIpHash           String?              @db.VarChar(128)
-  status                AccountStatus        @default(PENDING)
-  registeredAt          DateTime             @default(now()) @db.Timestamptz(6)
-  activatedAt           DateTime?            @db.Timestamptz(6)
-  lastActiveAt          DateTime?            @db.Timestamptz(6)
-  termsAcceptedAt       DateTime?            @db.Timestamptz(6)
-  termsVersion          String?
-  noRefundPolicyAcceptedAt DateTime?          @db.Timestamptz(6)
-  createdAt             DateTime             @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime             @updatedAt @db.Timestamptz(6)
+  signupIpHash                String?       @db.VarChar(128)
+  status                      AccountStatus @default(PENDING)
+  registeredAt                DateTime      @default(now()) @db.Timestamptz(6)
+  activatedAt                 DateTime?     @db.Timestamptz(6)
+  lastActiveAt                DateTime?     @db.Timestamptz(6)
+  termsAcceptedAt             DateTime?     @db.Timestamptz(6)
+  termsVersion                String?
+  noRefundPolicyAcceptedAt    DateTime?     @db.Timestamptz(6)
+  createdAt                   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt                   DateTime      @updatedAt @db.Timestamptz(6)
 
-  subscriptions         Subscription[]
-  senders               VerifiedSender[]
-  campaigns             Campaign[]
-  recipientGroups       RecipientGroup[]
-  quotaEntries          QuotaLedger[]
-  inactivityActions    InactivityAction[]
-  complianceEvents      ComplianceEvent[]
+  subscriptions     Subscription[]
+  senders           VerifiedSender[]
+  campaigns         Campaign[]
+  recipientGroups   RecipientGroup[]
+  quotaEntries      QuotaLedger[]
+  inactivityActions InactivityAction[]
+  complianceEvents  ComplianceEvent[]
 
   @@index([status, lastActiveAt])
 }
 
 model Subscription {
-  id                    String             @id @default(cuid())
-  userId                String
-  status                SubscriptionStatus @default(PENDING)
-  paymentStatus         PaymentStatus      @default(PENDING)
-  currency              BillingCurrency
+  id                     String             @id @default(cuid())
+  userId                 String
+  status                 SubscriptionStatus @default(PENDING)
+  paymentStatus          PaymentStatus      @default(PENDING)
+  currency               BillingCurrency
   // Application validation must restrict this to 1,000..10,000 in 1,000-email steps.
-  emailsPer24Hours      Int
+  emailsPer24Hours       Int
   // Total prepaid term in whole months; application validation must require at least 1.
-  durationMonths        Int
-  startsAt              DateTime?          @db.Timestamptz(6)
-  expiresAt             DateTime?          @db.Timestamptz(6)
-  stripeCustomerId      String?
-  stripeCheckoutSessionId String?           @unique
-  stripeSubscriptionId  String?            @unique
-  stripePaymentIntentId String?            @unique
-  receiptUrl            String?
-  paidAt                DateTime?          @db.Timestamptz(6)
-  createdAt             DateTime           @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime           @updatedAt @db.Timestamptz(6)
+  durationMonths         Int
+  amount                 Decimal            @db.Decimal(12, 2)
+  provider               String
+  paymentMethod          String?
+  countryCode            String?            @db.VarChar(2)
+  startsAt               DateTime?          @db.Timestamptz(6)
+  expiresAt              DateTime?          @db.Timestamptz(6)
+  providerCustomerId     String?
+  checkoutSessionId      String?
+  providerSubscriptionId String?
+  providerPaymentId      String?
+  receiptUrl             String?
+  paidAt                 DateTime?          @db.Timestamptz(6)
+  createdAt              DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime           @updatedAt @db.Timestamptz(6)
 
-  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  paymentEvents         PaymentEvent[]
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentEvents PaymentEvent[]
 
+  @@unique([provider, checkoutSessionId])
+  @@unique([provider, providerSubscriptionId])
+  @@unique([provider, providerPaymentId])
   @@index([userId, status, expiresAt])
+  @@index([provider, status, paymentStatus])
 }
 
 model PaymentEvent {
-  id                    String       @id @default(cuid())
-  subscriptionId        String
-  stripeEventId         String       @unique
-  eventType             String
-  processedAt           DateTime     @default(now()) @db.Timestamptz(6)
-  payloadDigest         String?
+  id              String   @id @default(cuid())
+  subscriptionId  String
+  provider        String
+  providerEventId String
+  eventType       String
+  processedAt     DateTime @default(now()) @db.Timestamptz(6)
+  payloadDigest   String?
 
-  subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
+  @@unique([provider, providerEventId])
   @@index([subscriptionId, processedAt])
 }
 
 model VerifiedSender {
-  id                    String                   @id @default(cuid())
+  id                    String                    @id @default(cuid())
   userId                String
   email                 String
   displayName           String
   replyToEmail          String?
-  verificationStatus    SenderVerificationStatus @default(PENDING)
+  verificationStatus    SenderVerificationStatus  @default(PENDING)
   verificationMethod    SenderVerificationMethod?
   // Persist only a hash of one-time verification tokens.
-  verificationTokenHash String?                  @unique
-  verifiedAt            DateTime?                @db.Timestamptz(6)
-  createdAt             DateTime                 @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime                 @updatedAt @db.Timestamptz(6)
+  verificationTokenHash String?                   @unique
+  verifiedAt            DateTime?                 @db.Timestamptz(6)
+  createdAt             DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime                  @updatedAt @db.Timestamptz(6)
 
-  user                  User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaigns             Campaign[]
-  dnsChecks             SenderDnsCheck[]
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+  dnsChecks SenderDnsCheck[]
 
   @@unique([userId, email])
   @@unique([userId, id])
@@ -163,80 +182,80 @@ model VerifiedSender {
 }
 
 model SenderDnsCheck {
-  id                    String         @id @default(cuid())
-  senderId              String
-  recordType            String         @db.VarChar(16)
-  hostname              String
-  expectedValueHash     String
-  observedValueHash     String?
-  matched               Boolean        @default(false)
-  checkedAt             DateTime       @default(now()) @db.Timestamptz(6)
+  id                String   @id @default(cuid())
+  senderId          String
+  recordType        String   @db.VarChar(16)
+  hostname          String
+  expectedValueHash String
+  observedValueHash String?
+  matched           Boolean  @default(false)
+  checkedAt         DateTime @default(now()) @db.Timestamptz(6)
 
-  sender                VerifiedSender @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  sender VerifiedSender @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([senderId, checkedAt])
 }
 
 model Campaign {
-  id                    String           @id @default(cuid())
-  userId                String
-  senderId              String
-  name                  String
+  id               String   @id @default(cuid())
+  userId           String
+  senderId         String
+  name             String
   // The local part is used to construct the platform's inbound routing address.
-  routingLocalPart      String           @unique
-  isEnabled             Boolean          @default(false)
-  createdAt             DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
+  routingLocalPart String   @unique
+  isEnabled        Boolean  @default(false)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
-  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sender                VerifiedSender   @relation(fields: [senderId], references: [id], onDelete: Restrict)
-  recipientGroups       CampaignGroup[]
-  quotaEntries          QuotaLedger[]
-  inboundMessages       InboundMessage[]
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sender          VerifiedSender   @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  recipientGroups CampaignGroup[]
+  quotaEntries    QuotaLedger[]
+  inboundMessages InboundMessage[]
 
   @@index([userId, isEnabled])
 }
 
 model RecipientGroup {
-  id                    String           @id @default(cuid())
-  userId                String
-  name                  String
-  createdAt             DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  recipients            Recipient[]
-  campaigns             CampaignGroup[]
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipients Recipient[]
+  campaigns  CampaignGroup[]
 
   @@unique([userId, name])
 }
 
 model CampaignGroup {
-  campaignId            String
-  recipientGroupId      String
-  createdAt             DateTime       @default(now()) @db.Timestamptz(6)
+  campaignId       String
+  recipientGroupId String
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
 
-  campaign              Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  recipientGroup        RecipientGroup @relation(fields: [recipientGroupId], references: [id], onDelete: Cascade)
+  campaign       Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipientGroup RecipientGroup @relation(fields: [recipientGroupId], references: [id], onDelete: Cascade)
 
   @@id([campaignId, recipientGroupId])
   @@index([recipientGroupId])
 }
 
 model Recipient {
-  id                    String                 @id @default(cuid())
-  recipientGroupId      String
-  email                 String
-  consentStatus         RecipientConsentStatus @default(PENDING)
-  consentedAt           DateTime?              @db.Timestamptz(6)
-  consentSource         String?
-  consentEvidence       String?
-  unsubscribedAt        DateTime?              @db.Timestamptz(6)
-  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
+  id               String                 @id @default(cuid())
+  recipientGroupId String
+  email            String
+  consentStatus    RecipientConsentStatus @default(PENDING)
+  consentedAt      DateTime?              @db.Timestamptz(6)
+  consentSource    String?
+  consentEvidence  String?
+  unsubscribedAt   DateTime?              @db.Timestamptz(6)
+  createdAt        DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime               @updatedAt @db.Timestamptz(6)
 
-  recipientGroup        RecipientGroup         @relation(fields: [recipientGroupId], references: [id], onDelete: Cascade)
-  quotaEntries          QuotaLedger[]
+  recipientGroup RecipientGroup @relation(fields: [recipientGroupId], references: [id], onDelete: Cascade)
+  quotaEntries   QuotaLedger[]
 
   @@unique([recipientGroupId, email])
   @@index([recipientGroupId, consentStatus])
@@ -244,46 +263,46 @@ model Recipient {
 }
 
 model SuppressionEntry {
-  id                    String            @id @default(cuid())
-  email                 String            @unique
-  reason                SuppressionReason
-  source                String?
-  createdAt             DateTime          @default(now()) @db.Timestamptz(6)
+  id        String            @id @default(cuid())
+  email     String            @unique
+  reason    SuppressionReason
+  source    String?
+  createdAt DateTime          @default(now()) @db.Timestamptz(6)
 }
 
 model InboundMessage {
-  id                    String       @id @default(cuid())
-  campaignId            String
-  providerMessageId     String?      @unique
-  senderEmail           String
-  subject               String?
-  bodyText              String?      @db.Text
-  bodyHtml              String?      @db.Text
-  receivedAt            DateTime     @default(now()) @db.Timestamptz(6)
-  processingStatus      String       @default("RECEIVED")
+  id                   String   @id @default(cuid())
+  campaignId           String
+  providerMessageId    String?  @unique
+  senderEmail          String
+  subject              String?
+  bodyText             String?  @db.Text
+  bodyHtml             String?  @db.Text
+  receivedAt           DateTime @default(now()) @db.Timestamptz(6)
+  processingStatus     String   @default("RECEIVED")
   // Store provider attachment references, not unbounded attachment contents, in this row.
-  attachmentReferences  Json?
+  attachmentReferences Json?
 
-  campaign              Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([campaignId, receivedAt])
 }
 
 model QuotaLedger {
-  id                    String           @id @default(cuid())
-  userId                String
-  campaignId            String
-  recipientId           String
-  inboundMessageId      String?
-  idempotencyKey        String           @unique
-  status                QuotaEntryStatus @default(RESERVED)
+  id               String           @id @default(cuid())
+  userId           String
+  campaignId       String
+  recipientId      String
+  inboundMessageId String?
+  idempotencyKey   String           @unique
+  status           QuotaEntryStatus @default(RESERVED)
   // Rolling 24-hour usage is counted from this reservation timestamp.
-  reservedAt            DateTime         @default(now()) @db.Timestamptz(6)
-  completedAt           DateTime?        @db.Timestamptz(6)
+  reservedAt       DateTime         @default(now()) @db.Timestamptz(6)
+  completedAt      DateTime?        @db.Timestamptz(6)
 
-  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaign              Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  recipient             Recipient        @relation(fields: [recipientId], references: [id], onDelete: Restrict)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign  Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient Recipient @relation(fields: [recipientId], references: [id], onDelete: Restrict)
 
   @@index([userId, reservedAt, status])
   @@index([campaignId, reservedAt])
@@ -299,30 +318,30 @@ model InactivityAction {
   evaluatedAt           DateTime             @default(now()) @db.Timestamptz(6)
   noRefundPolicyApplied Boolean              @default(false)
 
-  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, evaluatedAt])
 }
 
 model ComplianceEvent {
-  id                    String   @id @default(cuid())
-  userId                String
-  eventType             String
-  details               Json?
-  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+  id        String   @id @default(cuid())
+  userId    String
+  eventType String
+  details   Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
 
-  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([eventType, createdAt])
 }
 
 model SupportFaq {
-  id                    String   @id @default(cuid())
-  question              String
-  answer                String
-  isPublished           Boolean  @default(false)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(6)
+  id          String   @id @default(cuid())
+  question    String
+  answer      String
+  isPublished Boolean  @default(false)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
   @@index([isPublished, updatedAt])
 }

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Request | Injestionlike</title>
+  <style>
+    :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #0f172a; color: #f8fafc; }
+    body { max-width: 720px; margin: 32px auto; padding: 0 18px; }
+    section { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; }
+    label { display: block; margin: 14px 0; color: #cbd5e1; }
+    input, select, textarea, button { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 11px; border: 1px solid #475569; border-radius: 7px; color: inherit; background: #0f172a; font: inherit; }
+    textarea { min-height: 110px; }
+    button { background: #4f46e5; border: 0; cursor: pointer; }
+    .notice { min-height: 1.5em; color: #cbd5e1; white-space: pre-wrap; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Back to dashboard</a></p>
+  <section>
+    <h1>Private payment request</h1>
+    <p id="planSummary">Loading your selected plan…</p>
+    <form id="requestForm" hidden>
+      <label>Full name<input name="fullName" autocomplete="name" maxlength="160" required></label>
+      <label>Email address<input name="email" type="email" autocomplete="email" readonly required></label>
+      <label>Phone / WhatsApp number<input name="phone" type="tel" autocomplete="tel" minlength="5" maxlength="40" required></label>
+      <label>Country code<input name="countryCode" maxlength="2" placeholder="BF" required></label>
+      <label>City<input name="city" maxlength="120" autocomplete="address-level2" required></label>
+      <label>Preferred payment method
+        <select name="paymentMethod" required>
+          <option value="MOBILE_MONEY">Mobile Money</option>
+          <option value="BANK_TRANSFER">Bank Transfer</option>
+          <option value="WESTERN_UNION">Western Union</option>
+          <option value="MONEYGRAM">MoneyGram</option>
+          <option value="IN_PERSON_CASH">In-Person Cash</option>
+          <option value="INTERNATIONAL_WIRE">International Wire</option>
+          <option value="OTHER">Other</option>
+        </select>
+      </label>
+      <label>Additional notes<textarea name="additionalNotes" maxlength="2000"></textarea></label>
+      <button type="submit">Submit payment request</button>
+    </form>
+    <p id="status" class="notice" role="status" aria-live="polite"></p>
+    <div id="confirmation" hidden>
+      <h2>Request received</h2>
+      <p>Your request has been received. Our billing team will email your customized payment instructions shortly.</p>
+    </div>
+  </section>
+  <script>
+    const form = document.getElementById('requestForm');
+    const status = document.getElementById('status');
+    const params = new URLSearchParams(window.location.search);
+    const dailyLimit = Number(params.get('tier'));
+    const durationMonths = Number(params.get('months'));
+    let plan = null;
+    async function initialize() {
+      try {
+        const [accountResponse, plansResponse] = await Promise.all([
+          fetch('/api/account', { credentials: 'same-origin', headers: { Accept: 'application/json' } }),
+          fetch('/api/plans')
+        ]);
+        if (accountResponse.status === 401) {
+          window.location.assign('/');
+          return;
+        }
+        const account = await accountResponse.json();
+        const catalog = await plansResponse.json();
+        if (!accountResponse.ok) throw new Error(account.error || 'Could not load your account.');
+        if (!plansResponse.ok) throw new Error(catalog.error || 'Could not load plan information.');
+        if (!account.emailVerified) throw new Error('Verify your account email before requesting a payment plan.');
+        plan = catalog.plans.find((item) => item.dailyLimit === dailyLimit);
+        if (!plan || !catalog.durationsMonths.includes(durationMonths)) {
+          throw new Error('The selected plan or duration is invalid. Return to your dashboard and choose again.');
+        }
+        document.getElementById('planSummary').textContent =
+          `Tier ${plan.tier}: ${plan.dailyLimit.toLocaleString()} emails/day, up to ${plan.batchLimit.toLocaleString()} per send · ${durationMonths} month(s) · USD ${(plan.monthlyPriceUsd * durationMonths).toFixed(2)}`;
+        form.elements.email.value = account.email;
+        form.hidden = false;
+      } catch (error) {
+        status.textContent = error.message || 'Could not load your payment request.';
+      }
+    }
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      status.textContent = 'Submitting your request…';
+      const body = Object.fromEntries(new FormData(form));
+      body.dailyLimit = dailyLimit;
+      body.durationMonths = durationMonths;
+      body.countryCode = String(body.countryCode).trim().toUpperCase();
+      try {
+        const response = await fetch('/api/order-request', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Your request could not be submitted.');
+        form.hidden = true;
+        document.getElementById('planSummary').hidden = true;
+        status.textContent = '';
+        document.getElementById('confirmation').hidden = false;
+      } catch (error) {
+        status.textContent = error.message || 'Your request could not be submitted.';
+      }
+    });
+    initialize();
+  </script>
+</body>
+</html>
