@@ -60,7 +60,7 @@ async function reserveRecipients({ userId, senderAddress, requestedRecipients })
   return prisma.$transaction(async (tx) => {
     const now = new Date();
     const accounts = await tx.$queryRaw`
-      SELECT status, "emailVerifiedAt"
+      SELECT email, status, "emailVerifiedAt"
       FROM public."User"
       WHERE id = ${userId}
       FOR UPDATE
@@ -96,17 +96,52 @@ async function reserveRecipients({ userId, senderAddress, requestedRecipients })
     }
 
     const senders = await tx.$queryRaw`
-      SELECT id, email, "displayName"
+      SELECT id, email, "displayName", "verificationStatus"
       FROM public."VerifiedSender"
       WHERE "userId" = ${userId}
-        AND email = ${senderAddress}
-        AND "verificationStatus" = 'VERIFIED'
+        AND lower(email) = ${senderAddress}
       FOR UPDATE
     `;
-    if (!senders.length) {
+    let sender = senders.find((item) => item.verificationStatus === 'VERIFIED');
+    const accountEmail = accounts[0].email.trim().toLowerCase();
+    if (!sender && senderAddress === accountEmail) {
+      const nowForSender = new Date();
+      const displayName = accountEmail.split('@')[0] || 'Account sender';
+      if (senders.length) {
+        const updatedSenders = await tx.$queryRaw`
+          UPDATE public."VerifiedSender"
+          SET "displayName" = ${displayName},
+              "verificationStatus" = 'VERIFIED',
+              "verificationMethod" = 'EMAIL_LINK',
+              "verifiedAt" = COALESCE("verifiedAt", ${nowForSender}),
+              "updatedAt" = ${nowForSender}
+          WHERE id = ${senders[0].id}
+          RETURNING id, email, "displayName"
+        `;
+        sender = updatedSenders[0];
+      } else {
+        const createdSenders = await tx.$queryRaw`
+          INSERT INTO public."VerifiedSender" AS current_sender (
+            id, "userId", email, "displayName", "verificationStatus",
+            "verificationMethod", "verifiedAt", "createdAt", "updatedAt"
+          ) VALUES (
+            ${randomUUID()}, ${userId}, ${accountEmail}, ${displayName}, 'VERIFIED',
+            'EMAIL_LINK', ${nowForSender}, ${nowForSender}, ${nowForSender}
+          )
+          ON CONFLICT ("userId", email) DO UPDATE
+          SET "displayName" = EXCLUDED."displayName",
+              "verificationStatus" = 'VERIFIED',
+              "verificationMethod" = 'EMAIL_LINK',
+              "verifiedAt" = COALESCE(current_sender."verifiedAt", EXCLUDED."verifiedAt"),
+              "updatedAt" = EXCLUDED."updatedAt"
+          RETURNING id, email, "displayName"
+        `;
+        sender = createdSenders[0];
+      }
+    }
+    if (!sender) {
       return { status: 403, error: 'The From address must be verified for this account.' };
     }
-    const sender = senders[0];
 
     const blockedRows = await tx.$queryRaw`
       SELECT lower(recipient_email) AS email
