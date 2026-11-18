@@ -7,7 +7,9 @@ and in every Vercel deployment environment. Keep the connection string secret;
 do not commit it. The manual-payment migration creates the plan catalog,
 profiles, pending orders, agents, activation codes, and sender-specific blocks.
 The follow-up customer-payment migration adds submitted customer details and
-saved admin payment-instruction templates.
+saved admin payment-instruction templates. The contact-and-receipts migration
+adds discounted term pricing, private contact submissions, and chunked receipt
+storage. Apply all migrations before deploying the matching application code.
 It was applied directly with `prisma db execute`; if you later use Prisma
 Migrate, the SQL is safe to re-run and the migration must be recorded in the
 Prisma migration history before `prisma migrate deploy` is used as the sole
@@ -61,22 +63,27 @@ email/webhook notifications are recorded on the order.
 ## Manual payment and activation
 
 The site displays the ten USD monthly plan rates from `utils/pricing.js`.
-Multi-month totals are the monthly rate multiplied by 1, 3, 6, or 12, with no
-discount. The database catalog is seeded by the manual-payment migration.
+Multi-month totals apply 5% off for 3 months, 10% off for 6 months, and 15%
+off for 12 months; one month has no discount. The database catalog and term
+discount table are seeded by migrations.
 
 Customers must verify their account before they can submit a plan request.
-Configure local payment instructions and at least one international fallback
-Customers choose a tier and duration, then submit their name, verified email,
-phone/WhatsApp number, country, city, payment method, and optional notes at
-`/payment-request`. Agent contact details are not exposed through the customer
-API or UI. The billing alert is sent to `ADMIN_EMAIL`; admins use `/admin` to
-send customized payment instructions from `EMAIL_FROM`. Templates can be saved
-and reused from the reply dialog.
+They choose a tier and duration from the Contact Us page and submit their
+registered email, country, optional city, preferred payment method/message, and
+optional receipt. Payment requests require a verified account. Receipts are
+stored in private database chunks, checked against their declared image/PDF
+type and downloaded only through the protected `/admin` API. General contact
+messages are retained in the administrator inbox. Agent contact details are
+not exposed through the customer API or UI. The billing alert is sent to
+`ADMIN_EMAIL`; admins use `/admin` to send customized payment instructions or
+contact replies from `EMAIL_FROM`. Templates can be saved and reused from the
+reply dialog.
 
-Configure local payment instructions in `/admin` before accepting requests.
-Mark an order paid only after confirming funds were received, then generate an
-assigned code from that paid order. Codes are single-use and stored as keyed
-hashes. Customers redeem them from the dashboard.
+Confirm payment only after funds are received. The administrator confirmation
+action generates an order-bound single-use code and emails it to the
+registered account address. The visible code is stored only as a keyed hash;
+the admin screen offers a one-time copy backup immediately after delivery.
+Customers redeem codes from the dashboard.
 
 All non-pricing tables have RLS enabled without browser-facing policies. Keep
 database access behind the app's authenticated server routes and never expose

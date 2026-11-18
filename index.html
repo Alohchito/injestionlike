@@ -181,6 +181,17 @@
             margin: 12px 0;
             white-space: pre-wrap;
         }
+        .onboarding-banner {
+            border: 1px solid #6366f1;
+            border-radius: 10px;
+            padding: 16px;
+            margin: 18px 0;
+            background: rgba(99, 102, 241, .12);
+            text-align: left;
+        }
+        .onboarding-banner h3 { margin: 0 0 8px; color: var(--text); }
+        .onboarding-banner p { color: #cbd5e1; }
+        .onboarding-banner a { color: #c7d2fe; font-weight: 700; }
     </style>
 </head>
 <body>
@@ -208,6 +219,11 @@
             </form>
 
             <form id="signupForm" class="auth-form" action="/api/signup" method="POST" onsubmit="return validatePasswords()">
+                <aside class="onboarding-banner">
+                    <h3>Activate Your Account to Start Sending</h3>
+                    <p>Thank you for creating your account. To unlock full access to our email relay service, please visit our <strong>Contact Us</strong> page after registration to submit your selected plan, billing duration, and country. Our billing team will review your location and email you customized payment instructions—and once payment is confirmed, your activation code will be sent directly to your registered email address.</p>
+                    <a href="/contact">Go to Contact Us →</a>
+                </aside>
                 <div class="form-group">
                     <label for="signupEmail">Email Address</label>
                     <input type="email" id="signupEmail" name="email" placeholder="you@example.com" required>
@@ -225,6 +241,11 @@
             </form>
             <form id="verificationForm" class="auth-form" action="/api/signup" method="POST">
                 <input type="hidden" name="action" value="verify">
+                <aside class="onboarding-banner">
+                    <h3>Activate Your Account to Start Sending</h3>
+                    <p>Thank you for creating your account. To unlock full access to our email relay service, please visit our <strong>Contact Us</strong> page after registration to submit your selected plan, billing duration, and country. Our billing team will review your location and email you customized payment instructions—and once payment is confirmed, your activation code will be sent directly to your registered email address.</p>
+                    <a href="/contact">Go to Contact Us →</a>
+                </aside>
                 <div class="form-group">
                     <label for="verificationEmail">Email Address</label>
                     <input type="email" id="verificationEmail" name="email" required>
@@ -241,7 +262,7 @@
 
         <section class="card" id="pricingCatalog">
             <h2>Plans & pricing</h2>
-            <p>Monthly rates in USD. Multi-month totals are the monthly rate multiplied by the number of months; there are no term discounts.</p>
+            <p>Monthly rates are in USD. Multi-month plans receive an automatic discount: 5% for 3 months, 10% for 6 months, and 15% for 12 months.</p>
             <div class="pricing-list" id="pricingList"></div>
             <p>Online card checkout is coming soon. Payment is currently arranged through local agents or direct transfer.</p>
         </section>
@@ -251,6 +272,11 @@
             <p>Signed in as <strong id="accountEmail"></strong></p>
             <p id="accountPlan"></p>
             <p id="accountUsage"></p>
+            <aside class="onboarding-banner">
+                <h3>Activate Your Account to Start Sending</h3>
+                <p>Thank you for creating your account. To unlock full access to our email relay service, please visit our <strong>Contact Us</strong> page after registration to submit your selected plan, billing duration, and country. Our billing team will review your location and email you customized payment instructions—and once payment is confirmed, your activation code will be sent directly to your registered email address.</p>
+                <a href="/contact">Go to Contact Us →</a>
+            </aside>
             <a id="adminLink" href="/admin" hidden>Open administrator dashboard</a>
             <form id="activationForm" action="/api/activation-code" method="POST">
                 <h3>Enter activation code</h3>
@@ -316,10 +342,10 @@
                 <div class="form-group">
                     <label for="orderDuration">Duration</label>
                     <select id="orderDuration" name="durationMonths" required>
-                        <option value="1">1 month</option>
-                        <option value="3">3 months</option>
-                        <option value="6">6 months</option>
-                        <option value="12">12 months</option>
+                        <option value="1">1 month — 0% off</option>
+                        <option value="3">3 months — 5% off</option>
+                        <option value="6">6 months — 10% off</option>
+                        <option value="12">12 months — 15% off</option>
                     </select>
                 </div>
                 <p id="orderTotal"></p>
@@ -338,6 +364,7 @@
 
     <script>
         let plans = [];
+        let terms = [];
         const formatUsd = (amount) => `$${Number(amount).toFixed(2)}`;
 
         async function loadPlans() {
@@ -345,6 +372,7 @@
             if (!response.ok) throw new Error('Pricing is temporarily unavailable.');
             const catalog = await response.json();
             plans = catalog.plans;
+            terms = catalog.terms || [];
             const pricingList = document.getElementById('pricingList');
             const tierSelect = document.getElementById('orderTier');
             pricingList.replaceChildren();
@@ -369,9 +397,15 @@
             const plan = plans.find((item) =>
                 item.dailyLimit === Number(document.getElementById('orderTier').value));
             const months = Number(document.getElementById('orderDuration').value);
-            document.getElementById('orderTotal').textContent = plan
-                ? `Total: ${formatUsd(plan.monthlyPriceUsd * months)} (${months} × ${formatUsd(plan.monthlyPriceUsd)}; no term discount)`
-                : '';
+            const term = terms.find((item) => item.months === months);
+            if (!plan || !term) {
+                document.getElementById('orderTotal').textContent = '';
+                return;
+            }
+            const base = plan.monthlyPriceUsd * months;
+            const saved = Math.round(base * term.discountPercent) / 100;
+            document.getElementById('orderTotal').textContent =
+                `Base ${formatUsd(base)} · ${term.discountPercent}% discount saves ${formatUsd(saved)} · Final total ${formatUsd(base - saved)}`;
         }
 
         document.getElementById('orderTier').addEventListener('change', updateOrderTotal);
@@ -455,7 +489,9 @@
             try {
                 const { response, payload } = await submitJsonForm(event.currentTarget);
                 if (!response.ok) throw new Error(payload.error || 'Verification failed.');
-                window.location.assign(payload.redirect || '/');
+                document.getElementById('verificationForm').classList.remove('active');
+                showAuthMessage('Email verified. You can now submit your plan through Contact Us.');
+                await loadAccountWorkspace();
             } catch (error) {
                 showAuthMessage(error.message);
             }
@@ -522,7 +558,7 @@
                 tier: document.getElementById('orderTier').value,
                 months: document.getElementById('orderDuration').value
             });
-            window.location.assign(`/payment-request?${query}`);
+            window.location.assign(`/contact?${query}`);
         });
 
         document.getElementById('activationForm').addEventListener('submit', async (event) => {

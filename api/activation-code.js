@@ -110,7 +110,7 @@ module.exports = async function handler(req, res) {
         const orderRows = await tx.$queryRaw`
           SELECT status FROM public.pending_orders WHERE id = ${activation.pendingOrderId} FOR UPDATE
         `;
-        if (!orderRows.length || orderRows[0].status !== 'PAID') {
+        if (!orderRows.length || !['PAID', 'CODE_SENDING', 'CODE_SENT'].includes(orderRows[0].status)) {
           return { activated: false };
         }
       }
@@ -156,7 +156,7 @@ module.exports = async function handler(req, res) {
       if (activation.pendingOrderId) {
         await tx.$executeRaw`
           UPDATE public.pending_orders SET status = 'FULFILLED', fulfilled_at = ${now}, updated_at = ${now}
-          WHERE id = ${activation.pendingOrderId} AND status = 'PAID'
+          WHERE id = ${activation.pendingOrderId} AND status IN ('PAID', 'CODE_SENDING', 'CODE_SENT')
         `;
       }
       return { activated: true, subscription: subscriptions[0] };

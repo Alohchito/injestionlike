@@ -1,4 +1,4 @@
-const { PLAN_TIERS, PLAN_DURATIONS_MONTHS } = require('../utils/pricing');
+const { PLAN_TIERS, PLAN_DURATIONS_MONTHS, PLAN_TERMS } = require('../utils/pricing');
 
 module.exports = function handler(req, res) {
   if (req.method !== 'GET') {
@@ -9,6 +9,7 @@ module.exports = function handler(req, res) {
   return res.status(200).json({
     plans: PLAN_TIERS,
     durationsMonths: PLAN_DURATIONS_MONTHS,
+    terms: PLAN_TERMS,
     currency: 'USD',
     onlineCheckoutComingSoon: true,
   });

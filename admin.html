@@ -28,23 +28,29 @@
   <p id="status" class="notice" role="status">Checking administrator access…</p>
 
   <section>
-    <h2>Pending orders</h2>
+    <h2>Payment requests and receipts</h2>
     <p id="pendingCount" class="muted"></p>
     <div id="orders"></div>
   </section>
 
+  <section>
+    <h2>General Contact Us submissions</h2>
+    <div id="contacts"></div>
+  </section>
+
   <dialog id="paymentDialog">
-    <h2>Send payment instructions</h2>
+    <h2 id="replyDialogTitle">Send payment instructions</h2>
     <p id="paymentCustomer" class="muted"></p>
     <form id="paymentForm">
       <input type="hidden" name="orderId">
+      <input type="hidden" name="contactId">
       <label>Saved template
         <select id="templateSelect"><option value="">Write custom instructions</option></select>
       </label>
       <label>Email subject<input name="subject" maxlength="200" required></label>
-      <label>Payment instructions<textarea name="instructions" maxlength="8000" required></textarea></label>
+      <label>Instructions / reply<textarea name="instructions" maxlength="8000" required></textarea></label>
       <label>Save as template (optional)<input name="templateName" maxlength="100"></label>
-      <button type="submit">Send payment instructions</button>
+      <button type="submit">Send email</button>
       <button id="closePaymentDialog" type="button">Cancel</button>
     </form>
     <p id="paymentStatus" class="notice" role="status" aria-live="polite"></p>
@@ -65,8 +71,8 @@
         </label>
         <label>Duration
           <select name="durationMonths" required>
-            <option value="1">1 month</option><option value="3">3 months</option>
-            <option value="6">6 months</option><option value="12">12 months</option>
+            <option value="1">1 month — 0% off</option><option value="3">3 months — 5% off</option>
+            <option value="6">6 months — 10% off</option><option value="12">12 months — 15% off</option>
           </select>
         </label>
         <label>Assign to email (optional)
@@ -171,7 +177,8 @@
         orderSelect.appendChild(option);
       });
       orderSelect.value = selectedOrder;
-      const count = orders.filter((order) => order.status === 'PENDING').length;
+      const count = orders.filter((order) =>
+        ['PENDING', 'PENDING_INSTRUCTIONS', 'RECEIPT_UPLOADING', 'RECEIPT_SUBMITTED', 'CODE_SENDING'].includes(order.status)).length;
       document.getElementById('pendingCount').textContent = `${count} order(s) awaiting payment confirmation. This list refreshes every 30 seconds.`;
       if (lastPendingCount !== null && count > lastPendingCount) {
         status.textContent = `New pending order alert: ${count - lastPendingCount} new request(s).`;
@@ -183,6 +190,8 @@
         reply.addEventListener('click', () => {
           const form = document.getElementById('paymentForm');
           form.elements.orderId.value = order.id;
+          form.elements.contactId.value = '';
+          document.getElementById('replyDialogTitle').textContent = 'Send payment instructions';
           form.elements.subject.value = 'Your Injestionlike payment instructions';
           form.elements.instructions.value = '';
           form.elements.templateName.value = '';
@@ -193,24 +202,110 @@
           document.getElementById('paymentDialog').showModal();
         });
         action.appendChild(reply);
-        if (order.status === 'PENDING') {
-          const button = element('button', 'Mark as paid');
+        if (order.receiptSize && order.receiptChunkCount && order.status !== 'RECEIPT_UPLOADING') {
+          const receipt = element('button', 'View / Download Receipt');
+          receipt.addEventListener('click', () => downloadReceipt(order));
+          action.appendChild(receipt);
+        }
+        if (!['RECEIPT_UPLOADING', 'CODE_SENDING', 'CODE_SENT', 'FULFILLED', 'CANCELLED'].includes(order.status)) {
+          const button = element('button', 'Confirm Payment & Send Activation Code');
           button.addEventListener('click', async () => {
+            if (!window.confirm(`Confirm payment for ${order.customerEmail} and email their activation code?`)) return;
+            button.disabled = true;
+            status.textContent = 'Confirming payment and sending activation code…';
             try {
-              await api('/api/admin', { method: 'POST', body: JSON.stringify({ action: 'markPaid', orderId: order.id }) });
+              const result = await api('/api/admin', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'confirmPaymentAndSendCode', orderId: order.id })
+              });
+              generatedMessage = result.code;
+              document.getElementById('codeMessage').textContent =
+                `Activation code emailed to ${result.email}: ${result.code} · ${Number(result.dailyLimit).toLocaleString()}/day · ${Number(result.batchLimit).toLocaleString()}/send · ${result.durationMonths} month(s)`;
+              const copyButton = document.getElementById('copyCode');
+              copyButton.textContent = 'Copy Code';
+              copyButton.hidden = false;
+              status.textContent = 'Payment confirmed and activation email sent.';
               await refresh();
-            } catch (error) { status.textContent = error.message; }
+            } catch (error) {
+              status.textContent = error.message;
+              button.disabled = false;
+            }
           });
           action.appendChild(button);
         }
+        const basePrice = Number(order.baseAmountUsd ?? order.amountUsd);
+        const discountAmount = Number(order.discountAmountUsd || 0);
         return [
-          element('td', `${order.customerName} · ${order.customerEmail}\n${order.phoneWhatsapp}\n${Number(order.dailyLimit).toLocaleString()}/day for ${order.durationMonths} month(s) · USD ${Number(order.amountUsd).toFixed(2)}\n${order.countryCode} ${order.city}\n${new Date(order.requestedAt).toLocaleString()}\nOrder ID: ${order.id}`),
-          element('td', `${order.paymentMethod} · ${order.status}${order.additionalNotes ? `\nNotes: ${order.additionalNotes}` : ''}`),
+          element('td', `${order.customerName} · ${order.customerEmail}\n${order.countryName || order.countryCode}${order.city ? ` · ${order.city}` : ''}\nTier ${Math.round(Number(order.dailyLimit) / 1000)} · ${Number(order.dailyLimit).toLocaleString()}/day · ${Number(order.dailyLimit / 10).toLocaleString()}/send\n${order.durationMonths} month(s) · Base USD ${basePrice.toFixed(2)} · ${Number(order.discountPercent || 0)}% off (−USD ${discountAmount.toFixed(2)}) · Final USD ${Number(order.amountUsd).toFixed(2)}\n${new Date(order.requestedAt).toLocaleString()}\nOrder ID: ${order.id}${order.receiptFileName ? `\nReceipt: ${order.receiptFileName} (${Number(order.receiptSize).toLocaleString()} bytes)` : ''}`),
+          element('td', `${order.status}${order.additionalNotes ? `\nMessage / preferred payment: ${order.additionalNotes}` : ''}`),
           action
         ];
       });
       const container = document.getElementById('orders');
-      container.replaceChildren(table(['Customer / contact / plan / location / time', 'Payment / status / notes', 'Action'], rows));
+      container.replaceChildren(table(['Customer / location / plan / price / receipt', 'Status / message', 'Action'], rows));
+      const requestedOrderId = new URLSearchParams(window.location.search).get('order');
+      if (requestedOrderId) {
+        const index = orders.findIndex((order) => order.id === requestedOrderId);
+        const row = index >= 0 ? container.querySelectorAll('tbody tr')[index] : null;
+        if (row) {
+          row.style.outline = '2px solid #818cf8';
+          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }
+    async function downloadReceipt(order) {
+      try {
+        const chunks = [];
+        for (let chunk = 0; chunk < Number(order.receiptChunkCount); chunk += 1) {
+          const response = await fetch(
+            `/api/admin?view=receipt&orderId=${encodeURIComponent(order.id)}&chunk=${chunk}`,
+            { credentials: 'same-origin', headers: { Accept: 'application/octet-stream' } }
+          );
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || 'Receipt could not be downloaded.');
+          }
+          chunks.push(await response.blob());
+        }
+        const blob = new Blob(chunks, { type: order.receiptContentType });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = order.receiptFileName || 'payment-receipt';
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+    async function loadContacts() {
+      const { contacts } = await api('/api/admin?view=contacts');
+      const rows = contacts.map((contact) => {
+        const action = element('td');
+        const reply = element('button', 'Reply by email');
+        reply.addEventListener('click', () => {
+          const form = document.getElementById('paymentForm');
+          form.elements.orderId.value = '';
+          form.elements.contactId.value = contact.id;
+          document.getElementById('replyDialogTitle').textContent = 'Reply to contact submission';
+          form.elements.subject.value = `Re: ${contact.subject}`;
+          form.elements.instructions.value = '';
+          form.elements.templateName.value = '';
+          document.getElementById('templateSelect').value = '';
+          document.getElementById('paymentCustomer').textContent =
+            `${contact.name} · ${contact.email} · ${contact.countryName}${contact.city ? ` · ${contact.city}` : ''}`;
+          document.getElementById('paymentStatus').textContent = '';
+          document.getElementById('paymentDialog').showModal();
+        });
+        action.appendChild(reply);
+        return [
+          element('td', `${contact.name} · ${contact.email}\n${contact.countryName}${contact.city ? ` · ${contact.city}` : ''}\n${contact.subject}\n${new Date(contact.submittedAt).toLocaleString()}`),
+          element('td', `${contact.status}\n${contact.message}`),
+          action
+        ];
+      });
+      document.getElementById('contacts').replaceChildren(
+        table(['Contact / location / subject', 'Status / message', 'Action'], rows)
+      );
     }
     async function loadAgents() {
       const { agents } = await api('/api/admin?view=agents');
@@ -273,7 +368,7 @@
       });
     }
     async function refresh() {
-      await Promise.all([loadOrders(), loadAgents(), loadUsers(), loadCodes(), loadTemplates()]);
+      await Promise.all([loadOrders(), loadContacts(), loadAgents(), loadUsers(), loadCodes(), loadTemplates()]);
       status.textContent = 'Administrator data loaded.';
     }
     document.getElementById('codeForm').addEventListener('submit', async (event) => {
@@ -286,7 +381,9 @@
         const result = await api('/api/admin', { method: 'POST', body: JSON.stringify(body) });
         generatedMessage = `Your Injestionlike plan is ${Number(result.dailyLimit).toLocaleString()} emails/day (${Number(result.batchLimit).toLocaleString()} per send) for ${result.durationMonths} month(s), USD ${Number(result.amountUsd).toFixed(2)}. Activation code: ${result.code}`;
         document.getElementById('codeMessage').textContent = generatedMessage;
-        document.getElementById('copyCode').hidden = false;
+        const copyButton = document.getElementById('copyCode');
+        copyButton.textContent = 'Copy Code & Message';
+        copyButton.hidden = false;
         await loadCodes();
       } catch (error) { document.getElementById('codeMessage').textContent = error.message; }
     });
@@ -307,17 +404,19 @@
       const paymentStatus = document.getElementById('paymentStatus');
       paymentStatus.textContent = 'Sending instructions…';
       try {
+        const isContactReply = Boolean(form.elements.contactId.value);
         const result = await api('/api/admin', {
           method: 'POST',
           body: JSON.stringify({
-            action: 'sendPaymentInstructions',
+            action: isContactReply ? 'sendContactReply' : 'sendPaymentInstructions',
             orderId: form.elements.orderId.value,
+            contactId: form.elements.contactId.value,
             subject: form.elements.subject.value,
             instructions: form.elements.instructions.value
           })
         });
         const templateName = form.elements.templateName.value.trim();
-        if (templateName) {
+        if (templateName && !isContactReply) {
           await api('/api/admin', {
             method: 'POST',
             body: JSON.stringify({
@@ -329,7 +428,7 @@
           });
           await loadTemplates();
         }
-        paymentStatus.textContent = `Payment instructions sent to ${result.email}.`;
+        paymentStatus.textContent = `${isContactReply ? 'Reply sent' : 'Payment instructions sent'} to ${result.email}.`;
       } catch (error) {
         paymentStatus.textContent = error.message;
       }
@@ -362,7 +461,9 @@
       form.elements.email.value = order.email;
     });
     refresh().catch((error) => { status.textContent = error.message; });
-    window.setInterval(() => loadOrders().catch((error) => { status.textContent = error.message; }), 30000);
+    window.setInterval(() => {
+      Promise.all([loadOrders(), loadContacts()]).catch((error) => { status.textContent = error.message; });
+    }, 30000);
   </script>
 </body>
 </html>

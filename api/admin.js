@@ -2,7 +2,7 @@ const { createHmac, randomBytes } = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { getSessionUserId } = require('../utils/session');
 const { parseRequestBody } = require('../utils/request-body');
-const { getPlanTier, PLAN_DURATIONS_MONTHS } = require('../utils/pricing');
+const { getPlanTier, getPlanPricing, PLAN_DURATIONS_MONTHS } = require('../utils/pricing');
 const { sendEmail } = require('../utils/email');
 
 const prisma = new PrismaClient();
@@ -54,17 +54,56 @@ function parseAdminBody(req) {
 async function getOrders() {
   return prisma.$queryRaw`
     SELECT o.id, u.email, o.daily_limit AS "dailyLimit", o.amount_usd AS "amountUsd",
+           o.base_amount_usd AS "baseAmountUsd",
+           o.discount_percent AS "discountPercent",
+           o.discount_amount_usd AS "discountAmountUsd",
            o.duration_months AS "durationMonths", o.country_code AS "countryCode",
+           o.country_name AS "countryName",
            o.customer_name AS "customerName", o.customer_email AS "customerEmail",
            o.phone_whatsapp AS "phoneWhatsapp", o.additional_notes AS "additionalNotes",
            o.city, o.payment_method AS "paymentMethod", o.status,
            o.requested_at AS "requestedAt", o.paid_at AS "paidAt",
-           o.admin_notified_at AS "adminNotifiedAt"
+           o.admin_notified_at AS "adminNotifiedAt",
+           o.receipt_file_name AS "receiptFileName",
+           o.receipt_content_type AS "receiptContentType",
+           o.receipt_size AS "receiptSize",
+           o.receipt_chunk_count AS "receiptChunkCount"
     FROM public.pending_orders o
     JOIN public."User" u ON u.id = o.user_id
-    ORDER BY CASE WHEN o.status = 'PENDING' THEN 0 ELSE 1 END, o.requested_at DESC
+    ORDER BY CASE
+      WHEN o.status IN ('PENDING', 'PENDING_INSTRUCTIONS', 'RECEIPT_SUBMITTED') THEN 0
+      ELSE 1
+    END, o.requested_at DESC
     LIMIT 500
   `;
+}
+
+async function getContactSubmissions() {
+  return prisma.$queryRaw`
+    SELECT id, name, email, country_code AS "countryCode",
+           country_name AS "countryName", city, subject, message, status,
+           submitted_at AS "submittedAt"
+    FROM public.contact_submissions
+    ORDER BY submitted_at DESC
+    LIMIT 500
+  `;
+}
+
+async function getReceiptChunk(orderId, chunkIndex) {
+  if (typeof orderId !== 'string' || !orderId ||
+      !Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > 4) {
+    throw new TypeError('Invalid receipt reference.');
+  }
+  const rows = await prisma.$queryRaw`
+    SELECT o.receipt_file_name AS "fileName",
+           o.receipt_content_type AS "contentType",
+           c.data
+    FROM public.pending_orders o
+    JOIN public.pending_order_receipt_chunks c ON c.order_id = o.id
+    WHERE o.id = ${orderId} AND c.chunk_index = ${chunkIndex}
+  `;
+  if (!rows.length) throw new Error('Receipt was not found.');
+  return rows[0];
 }
 
 async function getTemplates() {
@@ -112,7 +151,7 @@ async function sendPaymentInstructions(orderId, subject, instructions) {
     FROM public.pending_orders WHERE id = ${orderId}
   `;
   if (!orders.length) throw new Error('Pending order was not found.');
-  if (!['PENDING', 'PAID'].includes(orders[0].status)) {
+  if (!['PENDING', 'PENDING_INSTRUCTIONS', 'RECEIPT_UPLOADING', 'RECEIPT_SUBMITTED', 'PAID'].includes(orders[0].status)) {
     throw new Error('Payment instructions can only be sent for an open order.');
   }
   await sendEmail({
@@ -121,6 +160,35 @@ async function sendPaymentInstructions(orderId, subject, instructions) {
     text: `Hello ${orders[0].name},\n\n${instructions.trim()}\n\nFor questions, use the Contact Us form on our website.`,
   });
   return { sent: true, email: orders[0].email };
+}
+
+async function sendContactReply(submissionId, subject, message) {
+  if (typeof submissionId !== 'string' || !submissionId) {
+    throw new TypeError('Contact submission ID is required.');
+  }
+  if (typeof subject !== 'string' || !subject.trim() || subject.length > 200 ||
+      /[\r\n]/.test(subject)) {
+    throw new TypeError('Enter a valid email subject.');
+  }
+  if (typeof message !== 'string' || !message.trim() || message.length > 8000) {
+    throw new TypeError('Enter a reply (maximum 8,000 characters).');
+  }
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    throw new Error('Configure RESEND_API_KEY and EMAIL_FROM before sending replies.');
+  }
+  const rows = await prisma.$queryRaw`
+    SELECT id, name, email FROM public.contact_submissions WHERE id = ${submissionId}
+  `;
+  if (!rows.length) throw new Error('Contact submission was not found.');
+  await sendEmail({
+    to: rows[0].email,
+    subject: subject.trim(),
+    text: `Hello ${rows[0].name},\n\n${message.trim()}\n\nFor further help, reply to this email or use the Contact Us form on our website.`,
+  });
+  await prisma.$executeRaw`
+    UPDATE public.contact_submissions SET status = 'REPLIED' WHERE id = ${submissionId}
+  `;
+  return { sent: true, email: rows[0].email };
 }
 
 async function getAgents() {
@@ -176,10 +244,158 @@ async function markOrderPaid(orderId) {
   const changed = await prisma.$executeRaw`
     UPDATE public.pending_orders
     SET status = 'PAID', paid_at = now(), updated_at = now()
-    WHERE id = ${orderId} AND status = 'PENDING'
+    WHERE id = ${orderId} AND status IN ('PENDING', 'PENDING_INSTRUCTIONS', 'RECEIPT_SUBMITTED')
   `;
   if (changed !== 1) throw new Error('Pending order was not found or is no longer pending.');
   return { status: 'PAID' };
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]);
+}
+
+async function confirmPaymentAndSendCode(orderId) {
+  if (typeof orderId !== 'string' || !orderId) throw new TypeError('Order ID is required.');
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    throw new Error('Configure RESEND_API_KEY and EMAIL_FROM before sending activation codes.');
+  }
+
+  const secret = process.env.ACTIVATION_CODE_SECRET || process.env.SESSION_SECRET;
+  if (!secret || Buffer.byteLength(secret, 'utf8') < 32) {
+    throw new Error('ACTIVATION_CODE_SECRET or a 32-byte SESSION_SECRET is required.');
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const orders = await tx.$queryRaw`
+      SELECT id, user_id AS "userId", customer_name AS "customerName",
+             customer_email AS "customerEmail", daily_limit AS "dailyLimit",
+             duration_months AS "durationMonths", amount_usd AS "amountUsd",
+             discount_percent AS "discountPercent",
+             discount_amount_usd AS "discountAmountUsd", status
+      FROM public.pending_orders WHERE id = ${orderId} FOR UPDATE
+    `;
+    const order = orders[0];
+    if (!order) throw new Error('Pending order was not found.');
+    if (!['PENDING', 'PENDING_INSTRUCTIONS', 'RECEIPT_SUBMITTED', 'PAID'].includes(order.status)) {
+      throw new Error('Payment cannot be confirmed for this order status.');
+    }
+
+    const tier = getPlanTier(order.dailyLimit);
+    if (!tier || !PLAN_DURATIONS_MONTHS.includes(order.durationMonths)) {
+      throw new Error('Order plan data is invalid.');
+    }
+    const amountUsd = Number(order.amountUsd);
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      throw new Error('Order amount is invalid.');
+    }
+
+    let code;
+    let codeHash;
+    let inserted;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      code = `ACT-${Math.round(tier.dailyLimit / 1000)}K-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}`;
+      codeHash = hashCode(code);
+      const rows = await tx.$queryRaw`
+        INSERT INTO public.activation_codes (
+          code_hash, code_prefix, daily_limit, duration_months, amount_usd,
+          assigned_to_user_id, pending_order_id
+        ) VALUES (
+          ${codeHash}, ${`ACT-${Math.round(tier.dailyLimit / 1000)}K`},
+          ${tier.dailyLimit}, ${order.durationMonths}, ${amountUsd}, ${order.userId}, ${order.id}
+        )
+        ON CONFLICT (pending_order_id) DO UPDATE
+          SET code_hash = EXCLUDED.code_hash,
+              code_prefix = EXCLUDED.code_prefix,
+              daily_limit = EXCLUDED.daily_limit,
+              duration_months = EXCLUDED.duration_months,
+              amount_usd = EXCLUDED.amount_usd,
+              assigned_to_user_id = EXCLUDED.assigned_to_user_id,
+              status = 'UNUSED',
+              redeemed_by_user_id = NULL,
+              redeemed_at = NULL,
+              starts_at = NULL,
+              expires_at = NULL,
+              subscription_id = NULL,
+              created_at = now()
+          WHERE public.activation_codes.status IN ('UNUSED', 'REVOKED')
+        RETURNING id
+      `;
+      if (rows.length) {
+        inserted = rows[0];
+        break;
+      }
+      const exists = await tx.$queryRaw`
+        SELECT id FROM public.activation_codes WHERE code_hash = ${codeHash}
+      `;
+      if (exists.length) continue;
+      throw new Error('An activation code has already been issued for this order.');
+    }
+    if (!inserted) throw new Error('Could not generate a unique activation code.');
+
+    await tx.$executeRaw`
+      UPDATE public.pending_orders
+      SET status = 'CODE_SENDING', paid_at = COALESCE(paid_at, now()), updated_at = now()
+      WHERE id = ${order.id}
+    `;
+    return { order, tier, code, codeId: inserted.id };
+  });
+
+  const mailText = [
+    `Hello ${result.order.customerName},`,
+    '',
+    'Your payment has been confirmed. Enter the activation code below in your account dashboard to unlock sending.',
+    '',
+    `Activation code: ${result.code}`,
+    `Plan: ${result.tier.dailyLimit.toLocaleString()} emails per rolling 24 hours`,
+    `Maximum per send: ${result.tier.batchLimit.toLocaleString()} emails`,
+    `Duration: ${result.order.durationMonths} month(s) from redemption`,
+    `Amount confirmed: USD ${Number(result.order.amountUsd).toFixed(2)}`,
+    '',
+    'Sign in using your registered email address, then paste the code into the “Enter activation code” box on your dashboard.',
+    'If you need help, use the Contact Us form on our website.',
+  ].join('\n');
+  try {
+    await sendEmail({
+      to: result.order.customerEmail,
+      subject: 'Your payment is confirmed — activate your Injestionlike plan',
+      text: mailText,
+      html: `<p>Hello ${escapeHtml(result.order.customerName)},</p><p>Your payment has been confirmed. Enter this activation code in your account dashboard to unlock sending:</p><p><strong style="font-size:20px">${escapeHtml(result.code)}</strong></p><ul><li>Plan: ${result.tier.dailyLimit.toLocaleString()} emails per rolling 24 hours</li><li>Maximum per send: ${result.tier.batchLimit.toLocaleString()} emails</li><li>Duration: ${result.order.durationMonths} month(s) from redemption</li><li>Amount confirmed: USD ${Number(result.order.amountUsd).toFixed(2)}</li></ul><p>Sign in using your registered email address and paste the code into the “Enter activation code” box on your dashboard. For help, use the Contact Us form on our website.</p>`,
+    });
+  } catch (error) {
+    await prisma.$executeRaw`
+      UPDATE public.activation_codes SET status = 'REVOKED'
+      WHERE id = ${result.codeId} AND status = 'UNUSED'
+    `;
+    await prisma.$executeRaw`
+      UPDATE public.pending_orders SET status = 'PAID', updated_at = now()
+      WHERE id = ${orderId} AND status = 'CODE_SENDING'
+    `;
+    console.error('Activation code email delivery failed:', {
+      orderId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw new Error('Payment was confirmed, but the activation email failed. Retry the confirmation from this order.');
+  }
+  await prisma.$executeRaw`
+    UPDATE public.pending_orders SET status = 'CODE_SENT', updated_at = now()
+    WHERE id = ${orderId} AND status = 'CODE_SENDING'
+  `;
+
+  return {
+    sent: true,
+    email: result.order.customerEmail,
+    code: result.code,
+    dailyLimit: result.tier.dailyLimit,
+    batchLimit: result.tier.batchLimit,
+    durationMonths: result.order.durationMonths,
+    amountUsd: Number(result.order.amountUsd),
+  };
 }
 
 async function createAgent(body) {
@@ -296,8 +512,9 @@ async function generateCode(body) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const visibleCode = `ACT-${Math.round(tier.dailyLimit / 1000)}K-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}`;
       const codeHash = hashCode(visibleCode);
+      const pricing = getPlanPricing(tier.dailyLimit, durationMonths);
       const amountUsd = body.amountUsd === undefined
-        ? tier.monthlyPriceUsd * durationMonths
+        ? pricing.totalCents / 100
         : Number(body.amountUsd);
       if (!Number.isFinite(amountUsd) || amountUsd < 0) {
         throw new Error('Order price is invalid.');
@@ -347,8 +564,21 @@ module.exports = async function handler(req, res) {
     if (!await requireAdmin(req, res)) return;
     if (req.method === 'GET') {
       const view = String(req.query && req.query.view || 'orders');
+      if (view === 'receipt') {
+        const chunk = Number(req.query && req.query.chunk);
+        const receipt = await getReceiptChunk(
+          String(req.query && req.query.orderId || ''),
+          chunk,
+        );
+        const fileName = String(receipt.fileName).replace(/[^A-Za-z0-9._-]/g, '_');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Type', receipt.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        return res.status(200).send(Buffer.from(receipt.data));
+      }
       const handlers = {
         orders: getOrders,
+        contacts: getContactSubmissions,
         agents: getAgents,
         users: getUsers,
         codes: getCodes,
@@ -360,6 +590,9 @@ module.exports = async function handler(req, res) {
 
     let result;
     if (body.action === 'markPaid') result = await markOrderPaid(body.orderId);
+    else if (body.action === 'confirmPaymentAndSendCode') {
+      result = await confirmPaymentAndSendCode(body.orderId);
+    }
     else if (body.action === 'saveAgent') result = await createAgent(body);
     else if (body.action === 'deleteAgent') result = await deleteAgent(body.id);
     else if (body.action === 'generateCode') result = await generateCode(body);
@@ -367,11 +600,14 @@ module.exports = async function handler(req, res) {
     else if (body.action === 'sendPaymentInstructions') {
       result = await sendPaymentInstructions(body.orderId, body.subject, body.instructions);
     }
+    else if (body.action === 'sendContactReply') {
+      result = await sendContactReply(body.contactId, body.subject, body.instructions);
+    }
     else return res.status(400).json({ error: 'Unknown admin action.' });
     return res.status(200).json(result);
   } catch (error) {
     const clientError = error instanceof TypeError ||
-      /not found|Only a confirmed|must match|No account exists|Could not generate/i.test(error.message || '');
+      /not found|Only a confirmed|must match|No account exists|Could not generate|Payment cannot be confirmed|activation code has already been issued|invalid/i.test(error.message || '');
     if (!clientError) {
       console.error('Admin operation failed:', {
         code: error && error.code,

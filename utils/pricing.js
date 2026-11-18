@@ -19,6 +19,17 @@ const PLAN_TIERS = Object.freeze(
 );
 
 const PLAN_DURATIONS_MONTHS = Object.freeze([1, 3, 6, 12]);
+const TERM_DISCOUNTS = Object.freeze({
+  1: 0,
+  3: 5,
+  6: 10,
+  12: 15,
+});
+const PLAN_TERMS = Object.freeze(
+  PLAN_DURATIONS_MONTHS.map((months) =>
+    Object.freeze({ months, discountPercent: TERM_DISCOUNTS[months] }),
+  ),
+);
 const plansByDailyLimit = new Map(
   PLAN_TIERS.map((plan) => [plan.dailyLimit, plan]),
 );
@@ -28,16 +39,33 @@ function getPlanTier(dailyLimit) {
   return Number.isSafeInteger(parsed) ? plansByDailyLimit.get(parsed) || null : null;
 }
 
-function getPlanTotalCents(dailyLimit, durationMonths) {
+function getPlanPricing(dailyLimit, durationMonths) {
   const plan = getPlanTier(dailyLimit);
   const months = Number(durationMonths);
   if (!plan || !PLAN_DURATIONS_MONTHS.includes(months)) return null;
-  return plan.monthlyPriceUsd * months * 100;
+  const basePriceCents = plan.monthlyPriceUsd * months * 100;
+  const discountPercent = TERM_DISCOUNTS[months];
+  const discountCents = Math.round(basePriceCents * discountPercent / 100);
+  return Object.freeze({
+    plan,
+    durationMonths: months,
+    basePriceCents,
+    discountPercent,
+    discountCents,
+    totalCents: basePriceCents - discountCents,
+  });
+}
+
+function getPlanTotalCents(dailyLimit, durationMonths) {
+  const pricing = getPlanPricing(dailyLimit, durationMonths);
+  return pricing ? pricing.totalCents : null;
 }
 
 module.exports = {
   PLAN_TIERS,
   PLAN_DURATIONS_MONTHS,
+  PLAN_TERMS,
   getPlanTier,
+  getPlanPricing,
   getPlanTotalCents,
 };

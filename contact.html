@@ -6,13 +6,18 @@
   <title>Contact Us | Injestionlike</title>
   <style>
     :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #0f172a; color: #f8fafc; }
-    body { max-width: 680px; margin: 32px auto; padding: 0 18px; }
+    body { max-width: 760px; margin: 32px auto; padding: 0 18px; }
     section { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; }
     label { display: block; margin: 14px 0; color: #cbd5e1; }
-    input, textarea, button { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 11px; border: 1px solid #475569; border-radius: 7px; color: inherit; background: #0f172a; font: inherit; }
-    textarea { min-height: 170px; }
+    input, select, textarea, button { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 11px; border: 1px solid #475569; border-radius: 7px; color: inherit; background: #0f172a; font: inherit; }
+    textarea { min-height: 120px; }
     button { background: #4f46e5; border: 0; cursor: pointer; }
-    .notice { min-height: 1.5em; color: #cbd5e1; }
+    button:disabled { opacity: .65; cursor: wait; }
+    .notice { min-height: 1.5em; color: #cbd5e1; white-space: pre-wrap; }
+    .muted { color: #94a3b8; }
+    .summary, .banner { margin: 18px 0; padding: 16px; border: 1px solid #475569; border-radius: 10px; background: #0f172a; }
+    .summary p, .banner p { margin: 6px 0; }
+    .field-note { display: block; color: #94a3b8; font-size: .9rem; margin-top: 5px; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -20,35 +25,333 @@
   <p><a href="/">← Home</a></p>
   <section>
     <h1>Contact Us</h1>
-    <p>Send our team a message using this form.</p>
+    <p>Registered users should select their country, plan, and duration below to receive localized payment instructions from our nearest regional agent or Burkina Faso headquarters. If you have already paid, upload your receipt here so our billing team can review it and deliver your activation code to your registered account email.</p>
+    <p class="muted">Payment details and agent contacts are sent privately by our billing team; they are not published on this website.</p>
     <form id="contactForm">
-      <label>Name<input name="name" autocomplete="name" maxlength="160" required></label>
-      <label>Email<input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Full name<input name="name" autocomplete="name" maxlength="160" required></label>
+      <label>Registered account email
+        <input name="email" type="email" autocomplete="email" maxlength="254" required>
+        <span class="field-note">Must match the email address registered on your account so we can deliver your activation code.</span>
+      </label>
+      <label>Country / location
+        <input id="countrySearch" list="countryOptions" autocomplete="country-name" placeholder="Type to search countries" required>
+        <datalist id="countryOptions"></datalist>
+      </label>
+      <input type="hidden" name="countryCode" id="countryCode">
+      <input type="hidden" name="countryName" id="countryName">
+      <label>City / state (optional)<input name="city" autocomplete="address-level2" maxlength="120"></label>
+      <label>Select plan tier
+        <select name="dailyLimit" id="dailyLimit">
+          <option value="">General inquiry (no plan request)</option>
+        </select>
+      </label>
+      <label>Subscription duration
+        <select name="durationMonths" id="durationMonths" disabled>
+          <option value="">Choose a plan first</option>
+        </select>
+      </label>
+      <div id="priceSummary" class="summary" aria-live="polite">
+        <strong>Live price summary</strong>
+        <p>Select a plan and duration to see your total.</p>
+      </div>
+      <label>Payment receipt (optional)
+        <input name="receipt" id="receipt" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf">
+        <span class="field-note">Accepted: JPG, PNG, WEBP, or PDF. Maximum file size: 5 MB.</span>
+      </label>
+      <label>Message / preferred payment method
+        <textarea name="message" maxlength="2000" placeholder="For example: Mobile Money, Bank Transfer, Western Union, MoneyGram, or your question." required></textarea>
+      </label>
       <label>Subject<input name="subject" maxlength="200" required></label>
-      <label>Message<textarea name="message" minlength="5" maxlength="5000" required></textarea></label>
-      <button type="submit">Send message</button>
+      <button id="submitButton" type="submit">Send payment request / message</button>
     </form>
     <p id="status" class="notice" role="status" aria-live="polite"></p>
+    <div id="confirmation" class="banner" hidden>
+      <h2>Submission received</h2>
+      <p id="confirmationText">Please check your registered email inbox for payment instructions or activation code delivery.</p>
+      <p><a href="/">Return to your account</a></p>
+    </div>
   </section>
   <script>
     const form = document.getElementById('contactForm');
     const status = document.getElementById('status');
+    const planSelect = document.getElementById('dailyLimit');
+    const durationSelect = document.getElementById('durationMonths');
+    const fileInput = document.getElementById('receipt');
+    const countryCodes = 'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');
+    const countryNames = new Intl.DisplayNames(['en'], { type: 'region' });
+    const countrySearch = document.getElementById('countrySearch');
+    const countryOptions = document.getElementById('countryOptions');
+    const countryCode = document.getElementById('countryCode');
+    const countryName = document.getElementById('countryName');
+    const countriesByName = new Map();
+    for (const code of countryCodes) {
+      const option = document.createElement('option');
+      option.value = countryNames.of(code);
+      countryOptions.appendChild(option);
+      countriesByName.set(option.value.toLocaleLowerCase(), code);
+    }
+    countrySearch.addEventListener('input', () => {
+      const selectedName = countrySearch.value.trim();
+      const code = countriesByName.get(selectedName.toLocaleLowerCase()) || '';
+      countryCode.value = code;
+      countryName.value = code ? countryNames.of(code) : '';
+      countrySearch.setCustomValidity(code ? '' : 'Select a country from the search suggestions.');
+    });
+
+    const formatUsd = (amount) => `$${Number(amount).toFixed(2)}`;
+    let catalog;
+    async function initialize() {
+      const response = await fetch('/api/plans');
+      catalog = await response.json();
+      if (!response.ok) throw new Error(catalog.error || 'Plan information is unavailable.');
+      for (const plan of catalog.plans) {
+        const option = document.createElement('option');
+        option.value = plan.dailyLimit;
+        option.textContent = `Tier ${plan.tier} — ${plan.dailyLimit.toLocaleString()}/day (${plan.batchLimit.toLocaleString()}/send) — ${formatUsd(plan.monthlyPriceUsd)}/mo`;
+        planSelect.appendChild(option);
+      }
+
+      const params = new URLSearchParams(location.search);
+      const requestedTier = params.get('tier');
+      const requestedMonths = params.get('months');
+      if (requestedTier) planSelect.value = requestedTier;
+      if (planSelect.value) populateDurations(requestedMonths);
+
+      const accountResponse = await fetch('/api/account', {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      });
+      if (accountResponse.ok) {
+        const account = await accountResponse.json();
+        form.elements.email.value = account.email;
+        form.elements.email.readOnly = true;
+        form.elements.name.value = account.fullName || '';
+        form.dataset.loggedIn = 'true';
+        form.dataset.verified = String(Boolean(account.emailVerified));
+      }
+      updatePriceSummary();
+    }
+
+    function populateDurations(selectedValue) {
+      durationSelect.replaceChildren();
+      const prompt = document.createElement('option');
+      prompt.value = '';
+      prompt.textContent = 'Select subscription duration';
+      durationSelect.appendChild(prompt);
+      for (const term of catalog.terms) {
+        const option = document.createElement('option');
+        option.value = term.months;
+        const discountText = term.discountPercent
+          ? ` — ${term.discountPercent}% off`
+          : ' — no discount';
+        option.textContent = `${term.months} ${term.months === 1 ? 'Month' : 'Months'}${discountText}`;
+        durationSelect.appendChild(option);
+      }
+      durationSelect.disabled = false;
+      if (selectedValue && catalog.terms.some((term) => term.months === Number(selectedValue))) {
+        durationSelect.value = selectedValue;
+      }
+    }
+
+    function updatePriceSummary() {
+      const container = document.getElementById('priceSummary');
+      const plan = catalog.plans.find((item) => item.dailyLimit === Number(planSelect.value));
+      const term = catalog.terms.find((item) => item.months === Number(durationSelect.value));
+      if (!plan || !term) {
+        container.innerHTML = '<strong>Live price summary</strong><p>Select a plan and duration to see your total.</p>';
+        return;
+      }
+      const base = plan.monthlyPriceUsd * term.months;
+      const saved = Math.round(base * term.discountPercent) / 100;
+      const total = base - saved;
+      container.replaceChildren();
+      const heading = document.createElement('strong');
+      heading.textContent = 'Live price summary';
+      const baseLine = document.createElement('p');
+      baseLine.textContent = `Base price: ${formatUsd(base)}`;
+      const discountLine = document.createElement('p');
+      discountLine.textContent = `Discount saved (${term.discountPercent}%): ${formatUsd(saved)}`;
+      const totalLine = document.createElement('p');
+      totalLine.textContent = `Final total due: ${formatUsd(total)}`;
+      container.append(heading, baseLine, discountLine, totalLine);
+    }
+    planSelect.addEventListener('change', () => {
+      if (planSelect.value) populateDurations();
+      else {
+        durationSelect.replaceChildren(new Option('Choose a plan first', ''));
+        durationSelect.disabled = true;
+      }
+      updatePriceSummary();
+    });
+    durationSelect.addEventListener('change', updatePriceSummary);
+
+    function encodeBase64(bytes) {
+      let binary = '';
+      const blockSize = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += blockSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + blockSize));
+      }
+      return btoa(binary);
+    }
+    async function postJson(url, body) {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Your submission could not be completed.');
+      return payload;
+    }
+    let pendingReceiptUpload = null;
+    async function uploadReceipt(orderId, file, chunkSize) {
+      const chunkCount = Math.ceil(file.size / chunkSize);
+      for (let index = 0; index < chunkCount; index += 1) {
+        status.textContent = `Securely uploading receipt (${index + 1} of ${chunkCount})…`;
+        const start = index * chunkSize;
+        const bytes = new Uint8Array(await file.slice(start, start + chunkSize).arrayBuffer());
+        const chunkResult = await postJson('/api/order-request', {
+          action: 'receiptChunk',
+          orderId,
+          chunkIndex: index,
+          data: encodeBase64(bytes)
+        });
+        if (index === chunkCount - 1 && !chunkResult.complete) {
+          throw new Error('Receipt upload is incomplete. Please retry your submission.');
+        }
+      }
+    }
+    function validateReceipt(file) {
+      if (!file) return;
+      const extension = file.name.split('.').pop().toLowerCase();
+      const mimeByExtension = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        webp: 'image/webp', pdf: 'application/pdf'
+      };
+      if (file.size < 1 || file.size > 5 * 1024 * 1024 ||
+          !mimeByExtension[extension] ||
+          (file.type && file.type !== mimeByExtension[extension])) {
+        throw new Error('Choose a JPG, PNG, WEBP, or PDF receipt no larger than 5 MB.');
+      }
+      return mimeByExtension[extension];
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      status.textContent = 'Sending your message…';
+      const button = document.getElementById('submitButton');
+      button.disabled = true;
+      status.textContent = 'Submitting…';
       try {
-        const response = await fetch('/api/contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify(Object.fromEntries(new FormData(form)))
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.error || 'Your message could not be sent.');
+        const values = Object.fromEntries(new FormData(form));
+        const file = fileInput.files[0] || null;
+        const isPlanRequest = Boolean(values.dailyLimit);
+        const receiptType = validateReceipt(file);
+        const countryCode = countriesByName.get(countrySearch.value.trim().toLocaleLowerCase()) || '';
+        if (!countryCode) throw new Error('Select a country from the search suggestions.');
+        values.countryCode = countryCode;
+        values.countryName = countryNames.of(countryCode);
+        if (isPlanRequest && !form.dataset.loggedIn) {
+          throw new Error('Sign in with your registered account before requesting a plan or submitting a receipt.');
+        }
+        if (isPlanRequest && form.dataset.verified !== 'true') {
+          throw new Error('Verify your account email before requesting a plan or submitting a receipt.');
+        }
+        if (isPlanRequest && !values.durationMonths) {
+          throw new Error('Select a subscription duration.');
+        }
+        if (file && !isPlanRequest) {
+          throw new Error('Sign in and select a plan before submitting a payment receipt.');
+        }
+
+        if (!isPlanRequest) {
+          const result = await postJson('/api/contact', {
+            name: values.name,
+            email: values.email,
+            countryCode: values.countryCode,
+            countryName: values.countryName,
+            city: values.city,
+            subject: values.subject,
+            message: values.message
+          });
+          form.hidden = true;
+          status.textContent = '';
+          document.getElementById('confirmationText').textContent = result.message;
+          document.getElementById('confirmation').hidden = false;
+          return;
+        }
+
+        const receiptChunkBytes = 1024 * 1024;
+        const chunkCount = file ? Math.ceil(file.size / receiptChunkBytes) : 0;
+        let orderId;
+        if (file) {
+          const sameUpload = pendingReceiptUpload &&
+            pendingReceiptUpload.fileName === file.name &&
+            pendingReceiptUpload.fileSize === file.size &&
+            pendingReceiptUpload.dailyLimit === Number(values.dailyLimit) &&
+            pendingReceiptUpload.durationMonths === Number(values.durationMonths) &&
+            pendingReceiptUpload.email === values.email;
+          if (pendingReceiptUpload && !sameUpload) {
+            throw new Error('Finish uploading the same receipt and plan first, or reload the page to start a new request.');
+          }
+          if (sameUpload) {
+            orderId = pendingReceiptUpload.orderId;
+          } else {
+            const result = await postJson('/api/order-request', {
+              fullName: values.name,
+              email: values.email,
+              countryCode: values.countryCode,
+              countryName: values.countryName,
+              city: values.city,
+              dailyLimit: Number(values.dailyLimit),
+              durationMonths: Number(values.durationMonths),
+              subject: values.subject,
+              message: values.message,
+              receiptFileName: file.name,
+              receiptContentType: receiptType,
+              receiptSize: file.size,
+              receiptChunkCount: chunkCount
+            });
+            orderId = result.orderId;
+            pendingReceiptUpload = {
+              orderId,
+              fileName: file.name,
+              fileSize: file.size,
+              dailyLimit: Number(values.dailyLimit),
+              durationMonths: Number(values.durationMonths),
+              email: values.email
+            };
+          }
+          await uploadReceipt(orderId, file, receiptChunkBytes);
+          pendingReceiptUpload = null;
+        } else {
+          await postJson('/api/order-request', {
+            fullName: values.name,
+            email: values.email,
+            countryCode: values.countryCode,
+            countryName: values.countryName,
+            city: values.city,
+            dailyLimit: Number(values.dailyLimit),
+            durationMonths: Number(values.durationMonths),
+            subject: values.subject,
+            message: values.message
+          });
+        }
         form.hidden = true;
-        status.textContent = payload.message;
+        status.textContent = '';
+        document.getElementById('confirmationText').textContent = file
+          ? 'Your request and payment receipt have been received. Please check your registered email inbox for confirmation and activation code delivery.'
+          : 'Your request has been received. Please check your registered email inbox for customized payment instructions and, after payment is confirmed, your activation code.';
+        document.getElementById('confirmation').hidden = false;
       } catch (error) {
-        status.textContent = error.message || 'Your message could not be sent.';
+        status.textContent = error.message || 'Your submission could not be completed.';
+      } finally {
+        button.disabled = false;
       }
+    });
+
+    initialize().catch((error) => {
+      status.textContent = error.message || 'The contact form could not be loaded.';
     });
   </script>
 </body>
