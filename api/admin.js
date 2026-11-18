@@ -21,7 +21,7 @@ function hashCode(code) {
   if (!secret || Buffer.byteLength(secret, 'utf8') < 32) {
     throw new Error('ACTIVATION_CODE_SECRET or a 32-byte SESSION_SECRET is required.');
   }
-  return createHmac('sha256', secret).update(code).digest('hex');
+  return createHmac('sha256', secret).update(String(code).trim().toUpperCase()).digest('hex');
 }
 
 async function requireAdmin(req, res) {

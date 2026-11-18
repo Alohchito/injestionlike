@@ -1,4 +1,4 @@
-const { createHmac, timingSafeEqual } = require('crypto');
+const { createHmac, randomUUID, timingSafeEqual } = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { getSessionUserId } = require('../utils/session');
 const { parseRequestBody } = require('../utils/request-body');
@@ -13,7 +13,7 @@ function hashCode(code) {
   if (!secret || Buffer.byteLength(secret, 'utf8') < 32) {
     throw new Error('ACTIVATION_CODE_SECRET or a 32-byte SESSION_SECRET is required.');
   }
-  return createHmac('sha256', secret).update(code).digest('hex');
+  return createHmac('sha256', secret).update(String(code).trim().toUpperCase()).digest('hex');
 }
 
 function equalHash(left, right) {
@@ -130,12 +130,12 @@ module.exports = async function handler(req, res) {
       }
       const subscriptions = await tx.$queryRaw`
         INSERT INTO public."Subscription" (
-          "userId", status, "paymentStatus", currency, "emailsPer24Hours",
+          id, "userId", status, "paymentStatus", currency, "emailsPer24Hours",
           "durationMonths", amount, provider, "paymentMethod", "countryCode",
           "startsAt", "expiresAt", "paidAt", "createdAt", "updatedAt"
         )
         VALUES (
-          ${user.id}, 'ACTIVE', 'PAID', 'USD', ${tier.dailyLimit},
+          ${randomUUID()}, ${user.id}, 'ACTIVE', 'PAID', 'USD', ${tier.dailyLimit},
           ${activation.durationMonths}, ${amount}, 'MANUAL', 'OFFLINE', NULL,
           ${startsAt}, ${expiresAt}, ${now}, ${now}, ${now}
         )
