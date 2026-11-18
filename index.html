@@ -453,7 +453,9 @@
         });
 
         async function submitJsonForm(form, extra = {}) {
-            const response = await fetch(form.action, {
+            const action = form.getAttribute('action');
+            if (!action) throw new Error('Form action is not configured.');
+            const response = await fetch(action, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
