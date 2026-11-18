@@ -447,6 +447,11 @@
             document.getElementById('authMessage').textContent = message || '';
         }
 
+        const verificationCodeInput = document.getElementById('verificationCode');
+        verificationCodeInput.addEventListener('input', () => {
+            verificationCodeInput.value = verificationCodeInput.value.replace(/\s+/g, '');
+        });
+
         async function submitJsonForm(form, extra = {}) {
             const response = await fetch(form.action, {
                 method: 'POST',
@@ -485,6 +490,7 @@
 
         document.getElementById('verificationForm').addEventListener('submit', async (event) => {
             event.preventDefault();
+            verificationCodeInput.value = verificationCodeInput.value.trim();
             showAuthMessage('Verifying your email…');
             try {
                 const { response, payload } = await submitJsonForm(event.currentTarget);

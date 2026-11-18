@@ -65,7 +65,7 @@ async function createPendingAccount(res, body) {
 
   let stage = 'password hashing';
   try {
-    const code = String(randomInt(0, 1000000)).padStart(6, '0');
+    const code = String(randomInt(0, 1000000)).padStart(6, '0').trim();
     const passwordHash = await hashPassword(password);
     stage = 'pending user insert';
     const user = await prisma.$transaction(async (tx) => {
@@ -170,7 +170,7 @@ async function resendVerificationEmail(res, body) {
     return res.status(429).json({ error: 'Please wait before requesting another verification code.' });
   }
 
-  const code = String(randomInt(0, 1000000)).padStart(6, '0');
+  const code = String(randomInt(0, 1000000)).padStart(6, '0').trim();
   const updated = await prisma.user.updateMany({
     where: {
       id: user.id,
@@ -209,7 +209,7 @@ async function resendVerificationEmail(res, body) {
 
 async function verifyPendingAccount(res, body) {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-  const code = typeof body.code === 'string' ? body.code.trim() : '';
+  const code = String(body.code ?? '').trim();
   if (!emailPattern.test(email) || !/^\d{6}$/.test(code)) {
     return res.status(400).json({ error: 'Enter a valid email and six-digit code.' });
   }
