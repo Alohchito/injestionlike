@@ -18,14 +18,17 @@
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
     .notice { color: #cbd5e1; min-height: 1.4em; white-space: pre-wrap; }
     .muted { color: #94a3b8; }
+    #adminDashboard { display: none; }
+    #adminDashboard.is-authorized { display: block; }
     dialog { max-width: 620px; width: calc(100% - 48px); color: #f8fafc; background: #1e293b; border: 1px solid #475569; border-radius: 12px; }
     dialog::backdrop { background: rgba(0, 0, 0, .7); }
   </style>
 </head>
 <body>
+  <p id="status" class="notice" role="status">Checking administrator access…</p>
+  <main id="adminDashboard">
   <h1>Administrator dashboard</h1>
   <p><a href="/">Return to the service</a></p>
-  <p id="status" class="notice" role="status">Checking administrator access…</p>
 
   <section>
     <h2>Payment requests and receipts</h2>
@@ -124,9 +127,11 @@
     <h2>Users, subscription status, and rolling usage</h2>
     <div id="users"></div>
   </section>
+  </main>
 
   <script>
     const status = document.getElementById('status');
+    const adminDashboard = document.getElementById('adminDashboard');
     let lastPendingCount = null;
     let generatedMessage = '';
     let instructionTemplates = [];
@@ -460,10 +465,30 @@
       form.elements.durationMonths.value = order.durationMonths;
       form.elements.email.value = order.email;
     });
-    refresh().catch((error) => { status.textContent = error.message; });
-    window.setInterval(() => {
-      Promise.all([loadOrders(), loadContacts()]).catch((error) => { status.textContent = error.message; });
-    }, 30000);
+    async function initialize() {
+      try {
+        const response = await fetch('/api/admin?view=orders', {
+          credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' }
+        });
+        if (response.status === 401 || response.status === 403) {
+          window.location.replace('/');
+          return;
+        }
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || `Request failed (${response.status}).`);
+        }
+        adminDashboard.classList.add('is-authorized');
+        await refresh();
+        window.setInterval(() => {
+          Promise.all([loadOrders(), loadContacts()]).catch((error) => { status.textContent = error.message; });
+        }, 30000);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+    initialize();
   </script>
 </body>
 </html>
