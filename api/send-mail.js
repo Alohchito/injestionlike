@@ -30,7 +30,7 @@ function escapeHtml(value) {
 }
 
 function getPublicSiteUrl() {
-  const configuredUrl = process.env.PUBLIC_SITE_URL || 'https://injestionlike.vercel.app';
+  const configuredUrl = process.env.PUBLIC_SITE_URL || 'https://sendiboxinstant.com';
   const url = new URL(configuredUrl);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
     throw new Error('PUBLIC_SITE_URL must be an HTTP(S) URL.');
@@ -48,15 +48,15 @@ function getRelayFrom(displayName) {
   if (!emailPattern.test(emailFrom) || /[\r\n]/.test(emailFrom)) {
     throw new Error('EMAIL_FROM is not configured correctly.');
   }
-  return `"${safeName} via Injestionlike" <${emailFrom}>`;
+  return `"${safeName} via Sendibox Instant" <${emailFrom}>`;
 }
 
 function formatEmailHtml(body, unsubscribeUrl) {
   const message = escapeHtml(body).replace(/\r\n|\r|\n/g, '<br>');
-  return `<div>${message}</div><hr><p style="font-size:12px;color:#555">You are receiving this message from a sender using Injestionlike. <a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe from this sender</a>.</p>`;
+  return `<div>${message}</div><hr><p style="font-size:12px;color:#555">You are receiving this message from a sender using Sendibox Instant. <a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe from this sender</a>.</p>`;
 }
 
-async function reserveRecipients({ userId, senderAddress, requestedRecipients }) {
+async function reserveRecipients({ userId, senderAddress, bodySenderName, requestedRecipients }) {
   return prisma.$transaction(async (tx) => {
     const now = new Date();
     const accounts = await tx.$queryRaw`
@@ -106,7 +106,7 @@ async function reserveRecipients({ userId, senderAddress, requestedRecipients })
     const accountEmail = accounts[0].email.trim().toLowerCase();
     if (!sender && senderAddress === accountEmail) {
       const nowForSender = new Date();
-      const displayName = accountEmail.split('@')[0] || 'Account sender';
+      const displayName = (typeof bodySenderName === 'string' && bodySenderName.trim()) ? bodySenderName.trim().slice(0, 100) : (accountEmail.split('@')[0] || 'Account sender');
       if (senders.length) {
         const updatedSenders = await tx.$queryRaw`
           UPDATE public."VerifiedSender"
@@ -271,7 +271,7 @@ async function deliverReserved({ reserved, sender, subject, body, replyTo, publi
             from,
             replyTo,
             subject,
-            text: `${body}\n\n---\nYou are receiving this message from a sender using Injestionlike.\nUnsubscribe from this sender: ${unsubscribeUrl.toString()}`,
+            text: `${body}\n\n---\nYou are receiving this message from a sender using Sendibox Instant.\nUnsubscribe from this sender: ${unsubscribeUrl.toString()}`,
             html: formatEmailHtml(body, unsubscribeUrl.toString()),
           });
         } catch (error) {
@@ -333,7 +333,7 @@ module.exports = async function handler(req, res) {
       cc: parseAddressList(body.cc),
       bcc: parseAddressList(body.bcc),
     };
-    if (!lists.to.length) throw new TypeError('At least one To recipient is required.');
+    if (!lists.to.length && !lists.cc.length && !lists.bcc.length) throw new TypeError('Enter at least one recipient in Bcc, To, or Cc.');
     requestedRecipients = [...new Set([...lists.to, ...lists.cc, ...lists.bcc])];
     if (requestedRecipients.length > 1000) {
       throw new TypeError('A send may include at most 1,000 unique recipients.');
@@ -373,7 +373,7 @@ module.exports = async function handler(req, res) {
   try {
     const reserved = await reserveRecipients({
       userId,
-      senderAddress: body.from.trim().toLowerCase(),
+      senderAddress: body.from.trim().toLowerCase(), bodySenderName: body.senderName,
       requestedRecipients,
     });
     if (reserved.status !== 200) {
