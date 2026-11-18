@@ -1,9 +1,14 @@
+const { randomUUID } = require('crypto');
 const { Prisma, PrismaClient } = require('@prisma/client');
 const { getSessionUserId } = require('../utils/session');
 const { parseRequestBody } = require('../utils/request-body');
+const { createOptOutToken } = require('../utils/opt-out');
+const { sendEmail } = require('../utils/email');
 
 const prisma = new PrismaClient();
 const emailPattern = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DELIVERY_CONCURRENCY = 5;
 
 function parseAddressList(value) {
   if (typeof value !== 'string' || !value.trim()) return [];
@@ -12,6 +17,244 @@ function parseAddressList(value) {
     throw new TypeError('Recipient addresses are invalid.');
   }
   return addresses;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]);
+}
+
+function getPublicSiteUrl() {
+  const configuredUrl = process.env.PUBLIC_SITE_URL || 'https://injestionlike.vercel.app';
+  const url = new URL(configuredUrl);
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('PUBLIC_SITE_URL must be an HTTP(S) URL.');
+  }
+  return url.origin;
+}
+
+function getRelayFrom(displayName) {
+  const safeName = String(displayName || 'Verified sender')
+    .replace(/[\r\n"]/g, '')
+    .trim()
+    .slice(0, 100);
+  if (!safeName) throw new Error('Verified sender display name is invalid.');
+  const emailFrom = (process.env.EMAIL_FROM || '').trim();
+  if (!emailPattern.test(emailFrom) || /[\r\n]/.test(emailFrom)) {
+    throw new Error('EMAIL_FROM is not configured correctly.');
+  }
+  return `"${safeName} via Injestionlike" <${emailFrom}>`;
+}
+
+function formatEmailHtml(body, unsubscribeUrl) {
+  const message = escapeHtml(body).replace(/\r\n|\r|\n/g, '<br>');
+  return `<div>${message}</div><hr><p style="font-size:12px;color:#555">You are receiving this message from a sender using Injestionlike. <a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe from this sender</a>.</p>`;
+}
+
+async function reserveRecipients({ userId, senderAddress, requestedRecipients }) {
+  return prisma.$transaction(async (tx) => {
+    const now = new Date();
+    const accounts = await tx.$queryRaw`
+      SELECT status, "emailVerifiedAt"
+      FROM public."User"
+      WHERE id = ${userId}
+      FOR UPDATE
+    `;
+    if (!accounts.length || accounts[0].status === 'SUSPENDED') {
+      return { status: 403, error: 'This account cannot send messages.' };
+    }
+    if (!accounts[0].emailVerifiedAt) {
+      return { status: 403, error: 'Verify your email before sending.' };
+    }
+
+    const subscriptions = await tx.$queryRaw`
+      SELECT id, "emailsPer24Hours" AS "dailyLimit", "expiresAt"
+      FROM public."Subscription"
+      WHERE "userId" = ${userId}
+        AND status = 'ACTIVE'
+        AND "paymentStatus" = 'PAID'
+        AND "expiresAt" > ${now}
+      ORDER BY "expiresAt" DESC
+      LIMIT 1
+      FOR UPDATE
+    `;
+    if (!subscriptions.length) {
+      return { status: 403, error: 'An active, unexpired plan is required to send.' };
+    }
+    const subscription = subscriptions[0];
+    const batchLimit = Math.floor(subscription.dailyLimit / 10);
+    if (requestedRecipients.length > batchLimit) {
+      return {
+        status: 400,
+        error: `This plan allows at most ${batchLimit} recipients per send.`,
+      };
+    }
+
+    const senders = await tx.$queryRaw`
+      SELECT id, email, "displayName"
+      FROM public."VerifiedSender"
+      WHERE "userId" = ${userId}
+        AND email = ${senderAddress}
+        AND "verificationStatus" = 'VERIFIED'
+      FOR UPDATE
+    `;
+    if (!senders.length) {
+      return { status: 403, error: 'The From address must be verified for this account.' };
+    }
+    const sender = senders[0];
+
+    const blockedRows = await tx.$queryRaw`
+      SELECT lower(recipient_email) AS email
+      FROM public.blocked_senders
+      WHERE sender_user_id = ${userId}
+        AND lower(sender_email) = ${senderAddress}
+        AND lower(recipient_email) IN (${Prisma.join(requestedRecipients)})
+    `;
+    const suppressionRows = await tx.$queryRaw`
+      SELECT lower(email) AS email
+      FROM public."SuppressionEntry"
+      WHERE lower(email) IN (${Prisma.join(requestedRecipients)})
+    `;
+    const excluded = new Set([
+      ...blockedRows.map((row) => row.email),
+      ...suppressionRows.map((row) => row.email),
+    ]);
+    const recipients = requestedRecipients.filter((email) => !excluded.has(email));
+    if (!recipients.length) {
+      return {
+        status: 200,
+        sender,
+        reserved: [],
+        skipped: requestedRecipients.length,
+      };
+    }
+
+    const usedRows = await tx.$queryRaw`
+      SELECT count(*)::int AS used
+      FROM public."QuotaLedger"
+      WHERE "userId" = ${userId}
+        AND status IN ('RESERVED', 'SENT')
+        AND "reservedAt" >= ${new Date(now.getTime() - ROLLING_WINDOW_MS)}
+    `;
+    const remaining = Math.max(0, subscription.dailyLimit - usedRows[0].used);
+    if (recipients.length > remaining) {
+      return {
+        status: 429,
+        error: `Only ${remaining} emails remain in your rolling 24-hour quota.`,
+      };
+    }
+
+    const campaignId = randomUUID();
+    const groupId = randomUUID();
+    const campaignName = `Relay send ${now.toISOString()}`;
+    await tx.$executeRaw`
+      INSERT INTO public."RecipientGroup" (id, "userId", name, "createdAt", "updatedAt")
+      VALUES (${groupId}, ${userId}, ${`relay-${randomUUID()}`}, ${now}, ${now})
+    `;
+    await tx.$executeRaw`
+      INSERT INTO public."Campaign" (
+        id, "userId", "senderId", name, "routingLocalPart", "isEnabled", "createdAt", "updatedAt"
+      ) VALUES (
+        ${campaignId}, ${userId}, ${sender.id}, ${campaignName},
+        ${`relay-${randomUUID().replace(/-/g, '')}`}, false, ${now}, ${now}
+      )
+    `;
+    await tx.$executeRaw`
+      INSERT INTO public."CampaignGroup" ("campaignId", "recipientGroupId", "createdAt")
+      VALUES (${campaignId}, ${groupId}, ${now})
+    `;
+
+    const reserved = recipients.map((email) => ({
+      email,
+      recipientId: randomUUID(),
+      ledgerId: randomUUID(),
+      idempotencyKey: randomUUID(),
+    }));
+    await tx.$executeRaw`
+      INSERT INTO public."Recipient" (
+        id, "recipientGroupId", email, "consentStatus", "consentedAt",
+        "consentSource", "consentEvidence", "createdAt", "updatedAt"
+      ) VALUES ${Prisma.join(reserved.map((recipient) => Prisma.sql`(
+        ${recipient.recipientId}, ${groupId}, ${recipient.email}, 'CONFIRMED', ${now},
+        'sender_attestation', ${campaignId}, ${now}, ${now}
+      )`))}
+    `;
+    await tx.$executeRaw`
+      INSERT INTO public."QuotaLedger" (
+        id, "userId", "campaignId", "recipientId", "idempotencyKey", status, "reservedAt"
+      ) VALUES ${Prisma.join(reserved.map((recipient) => Prisma.sql`(
+        ${recipient.ledgerId}, ${userId}, ${campaignId}, ${recipient.recipientId},
+        ${recipient.idempotencyKey}, 'RESERVED', ${now}
+      )`))}
+    `;
+
+    return {
+      status: 200,
+      sender: { ...sender, userId },
+      reserved,
+      skipped: requestedRecipients.length - recipients.length,
+    };
+  }, { maxWait: 5000, timeout: 15000 });
+}
+
+async function markDelivery(idempotencyKey, status) {
+  await prisma.quotaLedger.updateMany({
+    where: { idempotencyKey, status: 'RESERVED' },
+    data: {
+      status,
+      ...(status === 'SENT' ? { completedAt: new Date() } : {}),
+    },
+  });
+}
+
+async function deliverReserved({ reserved, sender, subject, body, replyTo, publicSiteUrl }) {
+  const from = getRelayFrom(sender.displayName);
+  let nextIndex = 0;
+  let sent = 0;
+  let failed = 0;
+  const workers = Array.from(
+    { length: Math.min(DELIVERY_CONCURRENCY, reserved.length) },
+    async () => {
+      while (nextIndex < reserved.length) {
+        const recipient = reserved[nextIndex];
+        nextIndex += 1;
+        const unsubscribeToken = createOptOutToken({
+          senderUserId: sender.userId || undefined,
+          senderEmail: sender.email,
+          recipientEmail: recipient.email,
+        });
+        const unsubscribeUrl = new URL('/api/unsubscribe', publicSiteUrl);
+        unsubscribeUrl.searchParams.set('token', unsubscribeToken);
+        try {
+          await sendEmail({
+            to: recipient.email,
+            from,
+            replyTo,
+            subject,
+            text: `${body}\n\n---\nYou are receiving this message from a sender using Injestionlike.\nUnsubscribe from this sender: ${unsubscribeUrl.toString()}`,
+            html: formatEmailHtml(body, unsubscribeUrl.toString()),
+          });
+        } catch (error) {
+          await markDelivery(recipient.idempotencyKey, 'FAILED');
+          failed += 1;
+          console.error('Relay recipient delivery failed:', {
+            status: error && error.status,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
+        await markDelivery(recipient.idempotencyKey, 'SENT');
+        sent += 1;
+      }
+    },
+  );
+  await Promise.all(workers);
+  return { sent, failed };
 }
 
 module.exports = async function handler(req, res) {
@@ -30,6 +273,7 @@ module.exports = async function handler(req, res) {
   if (!userId) return res.status(401).json({ error: 'Please log in.' });
 
   let body;
+  let requestedRecipients;
   try {
     body = parseRequestBody(
       req.body,
@@ -38,7 +282,10 @@ module.exports = async function handler(req, res) {
     if (
       typeof body.from !== 'string' ||
       typeof body.subject !== 'string' ||
+      !body.subject.trim() ||
       typeof body.body !== 'string' ||
+      !body.body.trim() ||
+      !emailPattern.test(body.from.trim()) ||
       /[\r\n]/.test(body.from) ||
       /[\r\n]/.test(body.subject) ||
       body.subject.length > 998 ||
@@ -46,12 +293,16 @@ module.exports = async function handler(req, res) {
     ) {
       throw new TypeError('Message fields are invalid.');
     }
-    body.recipients = {
+    const lists = {
       to: parseAddressList(body.to),
       cc: parseAddressList(body.cc),
       bcc: parseAddressList(body.bcc),
     };
-    if (!body.recipients.to.length) throw new TypeError('At least one To recipient is required.');
+    if (!lists.to.length) throw new TypeError('At least one To recipient is required.');
+    requestedRecipients = [...new Set([...lists.to, ...lists.cc, ...lists.bcc])];
+    if (requestedRecipients.length > 1000) {
+      throw new TypeError('A send may include at most 1,000 unique recipients.');
+    }
     if (
       body.replyTo &&
       (typeof body.replyTo !== 'string' || !emailPattern.test(body.replyTo.trim()))
@@ -66,89 +317,61 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: error.message || 'Invalid message.' });
   }
 
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    return res.status(503).json({ error: 'Outbound email delivery is not configured.' });
+  }
+  let publicSiteUrl;
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        status: true,
-        emailVerifiedAt: true,
-        subscriptions: {
-          where: {
-            status: 'ACTIVE',
-            paymentStatus: 'PAID',
-            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-          },
-          take: 1,
-          orderBy: { expiresAt: 'desc' },
-          select: { id: true, emailsPer24Hours: true, expiresAt: true },
-        },
-      },
-    });
-    if (!user || user.status === 'SUSPENDED') {
-      return res.status(403).json({ error: 'This account cannot send messages.' });
+    publicSiteUrl = getPublicSiteUrl();
+    if (!emailPattern.test(process.env.EMAIL_FROM.trim()) ||
+        /[\r\n]/.test(process.env.EMAIL_FROM)) {
+      throw new Error('EMAIL_FROM is not configured correctly.');
     }
-    if (!user.emailVerifiedAt || !user.subscriptions.length) {
-      return res.status(403).json({ error: 'Verify your email and activate a plan first.' });
+    const optOutSecret = process.env.ACTIVATION_CODE_SECRET || process.env.SESSION_SECRET;
+    if (!optOutSecret || Buffer.byteLength(optOutSecret, 'utf8') < 32) {
+      throw new Error('A 32-byte opt-out signing secret is required.');
     }
-
-    const sender = await prisma.verifiedSender.findFirst({
-      where: {
-        userId,
-        email: body.from.trim().toLowerCase(),
-        verificationStatus: 'VERIFIED',
-      },
-      select: { email: true },
-    });
-    if (!sender) {
-      return res.status(403).json({
-        error: 'The From address must be verified for this account.',
-      });
-    }
-
-    const recipients = [...new Set([
-      ...body.recipients.to,
-      ...body.recipients.cc,
-      ...body.recipients.bcc,
-    ])];
-    const subscription = user.subscriptions[0];
-    const batchLimit = Math.floor(subscription.emailsPer24Hours / 10);
-    if (recipients.length > batchLimit) {
-      return res.status(400).json({
-        error: `This plan allows at most ${batchLimit} recipients per send.`,
-      });
-    }
-    const used = await prisma.quotaLedger.count({
-      where: {
-        userId,
-        status: { in: ['RESERVED', 'SENT'] },
-        reservedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-    });
-    const remaining = Math.max(0, subscription.emailsPer24Hours - used);
-    if (recipients.length > remaining) {
-      return res.status(429).json({
-        error: `Only ${remaining} emails remain in your rolling 24-hour quota.`,
-      });
-    }
-
-    const blocked = await prisma.$queryRaw`
-      SELECT recipient_email AS email
-      FROM public.blocked_senders
-      WHERE sender_user_id = ${userId}
-        AND sender_email = ${sender.email}
-        AND recipient_email IN (${Prisma.join(recipients)})
-    `;
-    if (blocked.length) {
-      return res.status(403).json({
-        error: 'One or more recipients blocked this sender and cannot be included.',
-      });
-    }
-
-    return res.status(503).json({
-      error: 'No message was sent. Outbound delivery remains disabled until relay routing, opt-out links, and quota reservations are fully configured.',
-    });
   } catch (error) {
-    console.error('Mailer request validation failed:', {
+    return res.status(503).json({ error: error.message });
+  }
+
+  try {
+    const reserved = await reserveRecipients({
+      userId,
+      senderAddress: body.from.trim().toLowerCase(),
+      requestedRecipients,
+    });
+    if (reserved.status !== 200) {
+      return res.status(reserved.status).json({ error: reserved.error });
+    }
+    if (!reserved.reserved.length) {
+      return res.status(200).json({
+        message: 'No eligible recipients remained after sender-specific opt-outs and suppression filtering.',
+        sent: 0,
+        skipped: reserved.skipped,
+        failed: 0,
+      });
+    }
+
+    const replyTo = body.replyTo ? body.replyTo.trim().toLowerCase() : reserved.sender.email;
+    const delivery = await deliverReserved({
+      ...reserved,
+      subject: body.subject.trim(),
+      body: body.body,
+      replyTo,
+      publicSiteUrl,
+    });
+    const result = {
+      sent: delivery.sent,
+      skipped: reserved.skipped,
+      failed: delivery.failed,
+      message: delivery.failed
+        ? `Delivered to ${delivery.sent} recipient(s); ${delivery.failed} delivery attempt(s) failed.`
+        : `Delivered to ${delivery.sent} recipient(s).`,
+    };
+    return res.status(delivery.sent ? 200 : 502).json(result);
+  } catch (error) {
+    console.error('Mailer request could not be completed:', {
       name: error instanceof Error ? error.name : 'UnknownError',
       code: error && typeof error.code === 'string' ? error.code : undefined,
       message: error instanceof Error ? error.message : String(error),
@@ -156,3 +379,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Message submission could not be completed.' });
   }
 };
+
+module.exports.parseAddressList = parseAddressList;
+module.exports.escapeHtml = escapeHtml;
+module.exports.formatEmailHtml = formatEmailHtml;

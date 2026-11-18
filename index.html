@@ -292,7 +292,7 @@
 
         <section id="mailerPanel" class="card workspace-panel">
             <h2>Premium message composer</h2>
-            <p>Relay delivery is disabled until opt-out handling, quota reservations, and a trusted outbound provider are fully configured.</p>
+            <p>Active subscribers can send to consented recipients through our relay. Each address is delivered individually, sender-specific opt-outs are skipped, and every message includes an unsubscribe link for your verified sender address.</p>
             <form id="mailerForm" action="/api/send-mail" method="POST">
                 <div class="form-group">
                     <label for="mailFrom">From</label>
@@ -303,11 +303,11 @@
                     <input type="text" id="mailTo" name="to" placeholder="recipient@example.com" required>
                 </div>
                 <div class="form-group">
-                    <label for="mailCc">Cc</label>
+                    <label for="mailCc">Cc recipients (delivered individually)</label>
                     <input type="text" id="mailCc" name="cc">
                 </div>
                 <div class="form-group">
-                    <label for="mailBcc">Bcc</label>
+                    <label for="mailBcc">Bcc recipients (delivered individually)</label>
                     <input type="text" id="mailBcc" name="bcc">
                 </div>
                 <div class="form-group">
@@ -553,7 +553,7 @@
             message.textContent = 'Checking account and sender authorization…';
             try {
                 const { response, payload } = await submitJsonForm(event.currentTarget);
-                message.textContent = payload.error ||
+                message.textContent = payload.message || payload.error ||
                     (response.ok ? 'Message accepted.' : 'Message was not sent.');
             } catch (error) {
                 message.textContent = error.message || 'Message was not sent.';

@@ -1,7 +1,7 @@
-async function sendEmail({ to, subject, text, html }) {
+async function sendEmail({ to, subject, text, html, from, replyTo }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.EMAIL_FROM;
-  if (!apiKey || !from) {
+  const sender = from || process.env.EMAIL_FROM;
+  if (!apiKey || !sender) {
     throw new Error('Configure RESEND_API_KEY and EMAIL_FROM to send email.');
   }
 
@@ -11,7 +11,14 @@ async function sendEmail({ to, subject, text, html }) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from, to, subject, text, html }),
+    body: JSON.stringify({
+      from: sender,
+      to,
+      subject,
+      text,
+      html,
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    }),
   });
   if (!response.ok) {
     throw new Error(`Email delivery provider rejected the message (status ${response.status}).`);
